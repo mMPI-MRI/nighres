@@ -50,16 +50,18 @@ def image_pair(contrast_image1, contrast_image2, mask_file=None, comparisons=['c
 		if you are too lazy to provide a mask and want something quick!
 	'''
 
-	d1 = _volume_to_1d(contrast_image1, mask_file=mask_file)
-	d2 = _volume_to_1d(contrast_image2, mask_file=mask_file)
+	v1 = _volume_to_1d(contrast_image1, mask_file=mask_file)
+	v2 = _volume_to_1d(contrast_image2, mask_file=mask_file)
 	
+	# if we are sure that 0 is meaningless and not to be compared, 
+	# remove from both vectors
 	if remove_zero_voxels:
-		d2[d1==0] = np.nan
-		d2[d2==0] = np.nan
-		d1[d1==0] = np.nan
-		d1[d2==0] = np.nan
-		d1 = d1[~np.isnan(d1)]
-		d2 = d2[~np.isnan(d2)]
+		v2[v1==0] = np.nan
+		v2[v2==0] = np.nan
+		v1[v1==0] = np.nan
+		v1[v2==0] = np.nan
+		v1 = v1[~np.isnan(v1)]
+		v2 = v2[~np.isnan(v2)]
 	
 	res = {}
 	res['contrast_image1'] = contrast_image1
@@ -67,7 +69,7 @@ def image_pair(contrast_image1, contrast_image2, mask_file=None, comparisons=['c
 	res['zeros_removed'] = remove_zero_voxels
 	
 	if return_data_vectors:
-		res["input_vectors"] = np.vstack([d1,d2])
+		res["input_vectors"] = np.vstack([v1,v2])
 	
 	if comparisons is None:
 		return res
@@ -76,7 +78,7 @@ def image_pair(contrast_image1, contrast_image2, mask_file=None, comparisons=['c
 			comparisons = [comparisons]
 		for comparison in comparisons:
 			if comparison == "corrcoef":
-				res["corrcoef"] = np.corrcoef(d1,d2)
+				res["corrcoef"] = np.corrcoef(v1,v2)
 			if comparison = "euclidian_distance":
-				res["euclidian_distance"] = np.linalg.norm(d1-d2,2,0)
+				res["euclidian_distance"] = np.linalg.norm(v1-v2,2,0)
 	return res
