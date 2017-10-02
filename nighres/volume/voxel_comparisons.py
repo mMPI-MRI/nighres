@@ -22,7 +22,7 @@ def _volume_to_1d(volume_file, mask_file=None):
 	else:
 		return data.flatten()		
 
-def image_pair(contrast_image1, contrast_image2, mask_file=None, comparisons=['corrcoef','euclidian_distance'], return_data_vectors=True, remove_zero_voxels=False):
+def image_pair(contrast_image1, contrast_image2, mask_file=None, distances=['euclidian','seuclidian','correlation'], return_data_vectors=True, remove_zero_voxels=False):
 	'''
 	Directly compare the voxels of one contrast image to another. 
 	Intended to be used for comparing two different contrasts in a 
@@ -37,9 +37,16 @@ def image_pair(contrast_image1, contrast_image2, mask_file=None, comparisons=['c
 		Second input image
 	mask_file: niimg
 		Mask {0,1} of the same dimensions as input contrast_image1/2
-	comparisons: str|list
-		Single string or list of comparisons to conduct on input images
-		Can be one or more of ['corrcoef','euclidian_distance']
+	distance_metrics: str|list
+		Single string or list of distances to conduct on input images
+		Can be one or more of the distance metrics from
+		scipy.spatial.distance.cdist:
+		‘braycurtis’, ‘canberra’, ‘chebyshev’, ‘cityblock’, 
+		‘correlation’, ‘cosine’, ‘dice’, ‘euclidean’, ‘hamming’, 
+		‘jaccard’, ‘kulsinski’, ‘mahalanobis’, ‘matching’, ‘minkowski’, 
+		‘rogerstanimoto’, ‘russellrao’, ‘seuclidean’, 
+		‘sokalmichener’, ‘sokalsneath’, ‘sqeuclidean’, ‘wminkowski’, 
+		‘yule’.
 	return_data_vectors: bool (default = True)
 		Return 1d data vectors of input image in dictionary as 
 		"input_vectors"
@@ -50,6 +57,8 @@ def image_pair(contrast_image1, contrast_image2, mask_file=None, comparisons=['c
 		if you are too lazy to provide a mask and want something quick!
 	'''
 
+	import scipy.spatial.distance.cdist as cdist
+	
 	v1 = _volume_to_1d(contrast_image1, mask_file=mask_file)
 	v2 = _volume_to_1d(contrast_image2, mask_file=mask_file)
 	
@@ -67,18 +76,16 @@ def image_pair(contrast_image1, contrast_image2, mask_file=None, comparisons=['c
 	res['contrast_image1'] = contrast_image1
 	res['contrast_image2'] = contrast_image2
 	res['zeros_removed'] = remove_zero_voxels
+	res["corrcoef"] = np.corrcoef(v1,v2) #compute the correlation coef
 	
 	if return_data_vectors:
 		res["input_vectors"] = np.vstack([v1,v2])
 	
-	if comparisons is None:
-		return res
-	else:
-		if isinstance(comparisons),basestring):
-			comparisons = [comparisons]
-		for comparison in comparisons:
-			if comparison == "corrcoef":
-				res["corrcoef"] = np.corrcoef(v1,v2)
-			if comparison = "euclidian_distance":
-				res["euclidian_distance"] = np.linalg.norm(v1-v2,2,0)
+	if distance_metrics is not None:
+		if isinstance(distance_metrics),basestring):
+			distance_metrics = [distance_metrics]
+		for metric in distance_metrics:
+			# res["euclidian_distance"] = np.linalg.norm(v1-v2,2,0)
+			res[metric] = cdist(v1,v2,metric=metric)
 	return res
+
