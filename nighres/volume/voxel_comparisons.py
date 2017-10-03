@@ -100,20 +100,44 @@ def image_pair(contrast_image1, contrast_image2, mask_file=None, distances=['euc
 			res[metric] = cdist(v1,v2,metric=metric)
 	return res
 
-def extract_data_multi_image(contrast_image_list, mask_file=None, stack='vertical', start_stop_indices=None):
+def extract_data_multi_image(contrast_image_list, mask_file=None):
 	'''
 	Extract data from multiple image volumes and convert to 1d vector(s). If
-	mask_file contains more than one non-zero value, output will be split.
+	mask_file contains more than one non-zero value, output will be grouped
+	in columns according to sorted (increasing) mask_ids. Column indices provided
+	in output as mask_id_start_stop
 	'''
 
 	if isinstance(contrast_image_list,basestring):
 		contrast_image_list = [contrast_image_list]
 
-	mask_img = load_volume(mask_file)
-	mask_data = mask_img.get_data()
+	if mask_file is not None:
+		mask_img = load_volume(mask_file)
+		mask_data = mask_img.get_data()
+	else:
+		mask_data = np.ones_like(load_volume(contrast_image_list[0]).shape)
 	mask_ids = np.unique(mask_data)
+	mask_ids.sort()
 
-	for mask_id in mask_ids[mask_ids > 0]:
-		seg_mask = np.zeros_like(mask_data)
-		seg_mask[mask_data==mask_id] = 1
-		vec = _volume_to_1d(contrast_image, mask=seg_mask)
+	# pre=allocate an array for data
+	# rows are contrast images, cols are the data from each of the segs
+	res = np.zeros((len(contrast_image_list),np.sum(mask_data.flatten()>0)))*np.nan
+	mask_id_start_stop  = np.zeros((np.sum(mask_ids>0),3))*np.nan
+
+	for image_idx, contrast_image in enumerate(contrast_image_list):
+		start = 0
+
+		for mask_id_idx, mask_id in enumerate(mask_ids[mask_ids > 0]):
+			seg_mask = np.zeros_like(mask_data)
+			seg_mask[mask_data==mask_id] = 1
+			seg_vec = _volume_to_1d(contrast_image, mask=seg_mask)
+			stop = len(seg_vec)+start
+			res[image_idx,start:stop] = seg_vec
+			start = stop + 1
+
+			# construct a lookup for the mask ids and their respective start
+			# and stop columns, but only on the first image since they will
+			# all be the same
+			if image_idx == 0:
+				mask_id_start_stop[mask_id_idx] = np.array([mask_id,start,stop])
+	return res, mask_id_start_stop
