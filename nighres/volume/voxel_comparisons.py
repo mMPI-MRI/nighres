@@ -100,12 +100,18 @@ def image_pair(contrast_image1, contrast_image2, mask_file=None, distances=['euc
 			res[metric] = cdist(v1,v2,metric=metric)
 	return res
 
-def extract_data_multi_image(contrast_image_list, mask_file=None):
+def extract_data_multi_image(contrast_image_list, mask_file=None, image_zero_value=None):
 	'''
 	Extract data from multiple image volumes and convert to 1d vector(s). If
 	mask_file contains more than one non-zero value, output will be grouped
 	in columns according to sorted (increasing) mask_ids. Column indices provided
 	in output as mask_id_start_stop
+	
+	image_zero_value: int
+		This value is used to construct a mask from the first image in 
+		contrast_image_list (this value is set to 0, i.e., masked out)
+		ONLY used when mask_file is not provided. Don't be lazy, provide
+		a mask if you can.
 	'''
 
 	if isinstance(contrast_image_list,basestring):
@@ -116,6 +122,9 @@ def extract_data_multi_image(contrast_image_list, mask_file=None):
 		mask_data = mask_img.get_data()
 	else:
 		mask_data = np.ones_like(load_volume(contrast_image_list[0]).shape)
+		if image_zero_value is not None:
+			mask_data[load_volume(contrast_image_list[0]).get_data() == image_zero_value] = 0
+	
 	mask_ids = np.unique(mask_data)
 	mask_ids.sort()
 
