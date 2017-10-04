@@ -81,6 +81,11 @@ def extract_data_multi_image(contrast_image_list, mask_file=None, image_zero_val
 	in columns according to sorted (increasing) mask_ids. Column indices provided
 	in output as mask_id_start_stop
 
+	mask_file: niimg
+		Mask {0,1,...,n} of the same dimensions as input contrast_image1/2
+		Multiple indices >0 are valid. Start/stop positions in 2nd dimension
+		of output data_matrix.
+
 	image_zero_value: int
 		This value is used to construct a mask from the first image in
 		contrast_image_list (this value is set to 0, i.e., masked out)
@@ -108,9 +113,9 @@ def extract_data_multi_image(contrast_image_list, mask_file=None, image_zero_val
 	# to work with later - this is damn fast though
 	# TODO: make easier to use/interpret (lists of arrays)
 	# # mod: create an empty list of lists and then fill with arrays of known size
-	# # mod: res_list = [[] for _ in range(np.sum(mask_ids>0))]
+	# # mod: data_matrix_list = [[] for _ in range(np.sum(mask_ids>0))]
 
-	res = np.zeros((len(contrast_image_list),np.sum(mask_data.flatten()>0)))*np.nan
+	data_matrix = np.zeros((len(contrast_image_list),np.sum(mask_data.flatten()>0)))*np.nan
 	mask_id_start_stop  = np.zeros((np.sum(mask_ids>0),3))*np.nan
 
 	for image_idx, contrast_image in enumerate(contrast_image_list):
@@ -124,7 +129,7 @@ def extract_data_multi_image(contrast_image_list, mask_file=None, image_zero_val
 			print(seg_vec.shape)
 			stop = len(seg_vec)+start
 			print("{} - {}".format(start,stop))
-			res[image_idx,start:stop] = seg_vec
+			data_matrix[image_idx,start:stop] = seg_vec
 
 			# construct a lookup for the mask ids and their respective start
 			# and stop columns, but only on the first image since they will
@@ -132,4 +137,41 @@ def extract_data_multi_image(contrast_image_list, mask_file=None, image_zero_val
 			if image_idx == 0:
 				mask_id_start_stop[mask_id_idx] = np.array([mask_id,start,stop])
 			start = np.copy(stop)
-	return res, mask_id_start_stop.astype(int)
+	return data_matrix, mask_id_start_stop.astype(int)
+
+def compute_image_pair_stats(data_matrix, example_data_file, mask_id_start_stop=None, mask=None):
+'''
+data_matrix: np.ndarray() (3d)
+	A matrix of dimensions contrast (2) by voxel/element (n) by subject
+mask_id_start_stop: np.ndarray() (2d)
+	Matrix of mask_id values along with the start and stop positions along the
+	data_matrix for use if there is more than one index in the mask (i.e., a
+	segmentation)
+	If none, assumes all data are from a single mask
+mask:
+'''
+# to bring data back into the volume space, again assuming full co-reg
+# needs to be looped over sorted indices again as necessary
+# stat_map = np.zeros_like(contrast_image_list[0])
+# stat_map[mask] = stats
+
+# initialise the output stat map
+img = load_volume(example_data_file)
+stat_map = np.zeros(img.shape)
+aff = img.get_affine()
+head = img.header
+del img
+
+if mask is not none:
+	mask_img = load_volume(mask)
+	mask_data = mask_img.get_data()
+	del mask_img
+	mask_ids = np.unique(mask_data)
+	mask_ids.sort()
+else:
+	mask_ids = [[1]]
+	mask_ids = np.ones_like(stat_map).astype(bool)
+
+for mask_id_idx, mask_id in enumerate(mask_ids[mask_ids > 0]):
+	#do stuff here, only because you can output summary stats, otherwise why are you breaking this up into different segments... since it is all voxel-wise anyways
+	# TODO: reconsider
