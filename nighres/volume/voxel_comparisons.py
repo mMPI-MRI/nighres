@@ -1,10 +1,12 @@
 import numpy as np
-import nibabel as nb
-import os
-import sys
+import pandas as pd
+#import nibabel as nb
+#import os
+#import sys
 #import cbstools
+
 from ..io import load_volume, save_volume
-from ..utils import _output_dir_4saving
+#from ..utils import _output_dir_4saving
 
 def _volume_to_1d(volume_file, mask=None):
 	'''
@@ -74,7 +76,7 @@ def image_pair(contrast_image1, contrast_image2, mask_file=None, return_data_vec
 
 	return res
 
-def extract_data_multi_image(contrast_image_list, mask_file=None, image_zero_value=None):
+def extract_data_multi_image(contrast_image_list, mask_file=None, image_thr=None):
 	'''
 	Extract data from multiple image volumes and convert to 1d vector(s). If
 	mask_file contains more than one non-zero value, output will be grouped
@@ -86,9 +88,9 @@ def extract_data_multi_image(contrast_image_list, mask_file=None, image_zero_val
 		Multiple indices >0 are valid. Start/stop positions in 2nd dimension
 		of output data_matrix.
 
-	image_zero_value: int
+	image_thr: int
 		This value is used to construct a mask from the first image in
-		contrast_image_list (this value is set to 0, i.e., masked out)
+		contrast_image_list (anything BELOW this value is set to 0, i.e., masked out)
 		ONLY used when mask_file is not provided. Don't be lazy, provide
 		a mask if you can.
 	'''
@@ -101,8 +103,8 @@ def extract_data_multi_image(contrast_image_list, mask_file=None, image_zero_val
 		mask_data = mask_img.get_data()
 	else:
 		mask_data = np.ones_like(load_volume(contrast_image_list[0]).shape)
-		if image_zero_value is not None:
-			mask_data[load_volume(contrast_image_list[0]).get_data() == image_zero_value] = 0
+		if image_thr is not None:
+			mask_data[load_volume(contrast_image_list[0]).get_data() < image_thr] = 0
 
 	mask_ids = np.unique(mask_data)
 	mask_ids.sort()
@@ -111,7 +113,7 @@ def extract_data_multi_image(contrast_image_list, mask_file=None, image_zero_val
 	# rows are contrast images, cols are the data from each of the segs
 	# fastest way to do this, but obviously not the most straight forward
 	# to work with later - this is damn fast though
-	# TODO: make easier to use/interpret (lists of arrays)
+	# TODO: make easier to use/interpret (lists of arrays?)
 	# # mod: create an empty list of lists and then fill with arrays of known size
 	# # mod: data_matrix_list = [[] for _ in range(np.sum(mask_ids>0))]
 
@@ -139,39 +141,114 @@ def extract_data_multi_image(contrast_image_list, mask_file=None, image_zero_val
 			start = np.copy(stop)
 	return data_matrix, mask_id_start_stop.astype(int)
 
+def voxelwise_lm(data_matrix_full,descriptives,formula,output_vars,contrast_images_colname_head='contrast_image_'):
+	'''
+	formula: str
+		Written linear model of the form 'Y ~ X + Z'
+	output_vars: str|list
+		Variables that are of interest for output maps (t/p)
+		Intercept will automatically be included in the output so do not add it here
+	'''
+	import statsmodels.formula.api as smf
+
+	if isinstance(output_vars,basestring):
+		output_vars = [output_vars]
+	output_vars.append('Intercept') #add the intercept for output too
+
+	if isinstance(descriptives,basestring): #should be a csv file, load it
+		df = pd.read_csv(descriptives,header=0)
+	else:
+		df = descriptives
+
+	# check to make sure that the dimensions are compatible between descriptives
+	# and data_matrix_full
+	if descriptives is not None:
+		#TODO: checking
+		#do some checking here on num subs/cons and dimensions of data_matrix_full
+		pass
+
+	res_p = np.zeros((data_matrix_full.shape[1],len(output_vars)))*np.nan
+	res_t = np.copy(res_p)*np.nan
+	rsquared_adj = np.zeros((data_matrix_full.shape[1]))*np.nan
+
+	for voxel_idx,voxel in enumerate(data_matrix_full.shape[1]):
+		vdata = np.transpose(np.squeeze(data_matrix_full[:,voxel,:]))
+		df[df.columns[df.columns.str.startswith(contrast_images_colname_head)]] = vdata
+		lmf = smf.ols(formula=formula,data=df).fit()
+		for output_var_idx, output_var in enumerate(output_vars):
+			res_p[output_var_idx,voxel_idx] = lmf.pvalues[output_var]
+			res_t[output_var_idx,voxel_idx] = lmf.tvalues[output_var]
+		res_rsquared_adj[voxel_idx] = lmf.rsquared_adj[output_var]
+	return res_t, res_p, res_rsquared_adj
+
+def extract_data_group(descriptives,contrast_images_colname_head='contrast_image_',mask_file=None,image_thr=0):
+	'''
+	Extract data from multiple subjects with one or more different contrast
+	images. Automatically recognises and pulls multiple contrast images if
+	present, with column names starting with contrast_images_colname_head.
+
+	descriptives: csv|pd.DataFrame
+		.csv file or pandas dataframe containing:
+			1) full path(s) to subject contrast images (1 or more)
+			2) additional demographic, group, or control variables for analyses
+	contrast_images_colname_head: str
+		Unique text for name(s) of column(s) where subject contrast images are
+		listed. e.g. contrast_image_ for: ['contrast_image_FA',contrast_image_T1']
+	'''
+
+	if isinstance(descriptives,basestring): #should be a csv file, load it
+		df = pd.read_csv(descriptives,header=0)
+	else:
+		df = descriptives
+
+	df_contrasts_list = df[df.columns[df.columns.str.startswith(contrast_images_colname_head)]]
+	contrasts_list = df_contrasts_list.values.tolist()
+
+	for contrast_idx,contrasts in enumerate(contrasts_list): #TODO: this will fail with only a single individual's data
+		data_matrix, mask_id_start_stop = extract_data_multi_image(contrasts,mask_file=mask_file,image_thr=image_thr)
+		#if this is the first time through, we use the shape of the data_matrix to set our output size
+		if contrast_idx == 0:
+			data_matrix_full = np.zeros((data_matrix.shape + (np.shape(contrasts_list)[0],)))
+		data_matrix_full[:,:,contrast_idx] = data_matrix
+
+	return data_matrix_full, mask_id_start_stop
+
 def compute_image_pair_stats(data_matrix, example_data_file, mask_id_start_stop=None, mask=None):
-'''
-data_matrix: np.ndarray() (3d)
-	A matrix of dimensions contrast (2) by voxel/element (n) by subject
-mask_id_start_stop: np.ndarray() (2d)
-	Matrix of mask_id values along with the start and stop positions along the
-	data_matrix for use if there is more than one index in the mask (i.e., a
-	segmentation)
-	If none, assumes all data are from a single mask
-mask:
-'''
-# to bring data back into the volume space, again assuming full co-reg
-# needs to be looped over sorted indices again as necessary
-# stat_map = np.zeros_like(contrast_image_list[0])
-# stat_map[mask] = stats
+	'''
+	data_matrix: np.ndarray() (3d)
+		A matrix of dimensions contrast (2) by voxel/element (n) by subject
+	mask_id_start_stop: np.ndarray() (2d)
+		Matrix of mask_id values along with the start and stop positions along the
+		data_matrix for use if there is more than one index in the mask (i.e., a
+		segmentation)
+		If none, assumes all data are from a single mask
+	mask:
+	'''
 
-# initialise the output stat map
-img = load_volume(example_data_file)
-stat_map = np.zeros(img.shape)
-aff = img.get_affine()
-head = img.header
-del img
+	# to bring data back into the volume space, again assuming full co-reg
+	# needs to be looped over sorted indices again as necessary
+	# stat_map = np.zeros_like(contrast_image_list[0])
+	# stat_map[mask] = stats
 
-if mask is not none:
-	mask_img = load_volume(mask)
-	mask_data = mask_img.get_data()
-	del mask_img
-	mask_ids = np.unique(mask_data)
-	mask_ids.sort()
-else:
-	mask_ids = [[1]]
-	mask_ids = np.ones_like(stat_map).astype(bool)
+	# initialise the output stat map
+	img = load_volume(example_data_file)
+	stat_map = np.zeros(img.shape)
+	aff = img.get_affine()
+	head = img.header
+	del img
 
-for mask_id_idx, mask_id in enumerate(mask_ids[mask_ids > 0]):
-	#do stuff here, only because you can output summary stats, otherwise why are you breaking this up into different segments... since it is all voxel-wise anyways
-	# TODO: reconsider
+	if mask is not none:
+		mask_img = load_volume(mask)
+		mask_data = mask_img.get_data()
+		del mask_img
+		mask_ids = np.unique(mask_data)
+		mask_ids.sort()
+	else:
+		mask_ids = [[1]]
+		mask_ids = np.ones_like(stat_map).astype(bool)
+
+	for mask_id_idx, mask_id in enumerate(mask_ids[mask_ids > 0]):
+		#do stuff here, only because you can output summary stats, otherwise why are you breaking this up into different segments... since it is all voxel-wise anyways
+		# TODO: reconsider
+		pass
+	return None
