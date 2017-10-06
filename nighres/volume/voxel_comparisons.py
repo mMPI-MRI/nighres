@@ -124,13 +124,13 @@ def extract_data_multi_image(contrast_image_list, mask_file=None, image_thr=None
 		start = 0
 
 		for mask_id_idx, mask_id in enumerate(mask_ids[mask_ids > 0]):
-			print("mask id: {}".format(mask_id))
+			#print("mask id: {}".format(mask_id))
 			seg_mask = np.zeros_like(mask_data)
 			seg_mask[mask_data==mask_id] = 1
 			seg_vec = _volume_to_1d(contrast_image, mask=seg_mask)
-			print(seg_vec.shape)
+			#print(seg_vec.shape)
 			stop = len(seg_vec)+start
-			print("{} - {}".format(start,stop))
+			#print("{} - {}".format(start,stop))
 			data_matrix[image_idx,start:stop] = seg_vec
 
 			# construct a lookup for the mask ids and their respective start
@@ -167,19 +167,26 @@ def voxelwise_lm(data_matrix_full,descriptives,formula,output_vars,contrast_imag
 		#do some checking here on num subs/cons and dimensions of data_matrix_full
 		pass
 
-	res_p = np.zeros((data_matrix_full.shape[1],len(output_vars)))*np.nan
+	res_p = np.zeros((len(output_vars),data_matrix_full.shape[1]))*np.nan #each output var gets its own row
 	res_t = np.copy(res_p)*np.nan
-	rsquared_adj = np.zeros((data_matrix_full.shape[1]))*np.nan
+	res_rsquared_adj = np.zeros((data_matrix_full.shape[1]))*np.nan
+	print(res_p.shape)
 
-	for voxel_idx,voxel in enumerate(data_matrix_full.shape[1]):
+	# this is extraordinarily slow, since we run linear models separatenly for each voxel :-/
+	#for voxel_idx,voxel in enumerate(range(5)):
+	for voxel_idx,voxel in enumerate(range(data_matrix_full.shape[1])):
 		vdata = np.transpose(np.squeeze(data_matrix_full[:,voxel,:]))
 		df[df.columns[df.columns.str.startswith(contrast_images_colname_head)]] = vdata
 		lmf = smf.ols(formula=formula,data=df).fit()
 		for output_var_idx, output_var in enumerate(output_vars):
 			res_p[output_var_idx,voxel_idx] = lmf.pvalues[output_var]
 			res_t[output_var_idx,voxel_idx] = lmf.tvalues[output_var]
-		res_rsquared_adj[voxel_idx] = lmf.rsquared_adj[output_var]
-	return res_t, res_p, res_rsquared_adj
+		res_rsquared_adj[voxel_idx] = lmf.rsquared_adj
+	res = {}
+	res['tvalues'] = res_t
+	res['pvalues'] = res_p
+	res['rsquared_adj'] = res_rsquared_adj
+	return res
 
 def extract_data_group(descriptives,contrast_images_colname_head='contrast_image_',mask_file=None,image_thr=0):
 	'''
