@@ -143,6 +143,11 @@ def extract_data_multi_image(contrast_image_list, mask_file=None, image_thr=None
 
 def voxelwise_lm(data_matrix_full,descriptives,formula,output_vars,contrast_images_colname_head='contrast_image_'):
 	'''
+	data_matrix_full: np.ndarray
+	descriptives: csv|pd.DataFrame
+		.csv file or pandas dataframe containing:
+			1) full path(s) to subject contrast images (1 or more)
+			2) additional demographic, group, or control variables for analyses
 	formula: str
 		Written linear model of the form 'Y ~ X + Z'
 	output_vars: str|list
@@ -157,26 +162,24 @@ def voxelwise_lm(data_matrix_full,descriptives,formula,output_vars,contrast_imag
 
 	if isinstance(descriptives,basestring): #should be a csv file, load it
 		df = pd.read_csv(descriptives,header=0)
-	else:
+	elif isinstance(descriptives, pd.DataFrame):
 		df = descriptives
+	#TODO: is there a None condition? i.e., we just want to correlate things...?
 
+	# TODO: check stuffs
 	# check to make sure that the dimensions are compatible between descriptives
 	# and data_matrix_full
-	if descriptives is not None:
-		#TODO: checking
-		#do some checking here on num subs/cons and dimensions of data_matrix_full
-		pass
 
 	res_p = np.zeros((len(output_vars),data_matrix_full.shape[1]))*np.nan #each output var gets its own row
 	res_t = np.copy(res_p)*np.nan
-	res_rsquared_adj = np.zeros((data_matrix_full.shape[1]))*np.nan
-	print(res_p.shape)
+	res_rsquared_adj = np.zeros((data_matrix_full.shape[1]))*np.nan #single row of R2, only one per model
+	#print(res_p.shape)
 
 	# this is extraordinarily slow, since we run linear models separatenly for each voxel :-/
 	#for voxel_idx,voxel in enumerate(range(5)):
 	for voxel_idx,voxel in enumerate(range(data_matrix_full.shape[1])):
 		vdata = np.transpose(np.squeeze(data_matrix_full[:,voxel,:]))
-		df[df.columns[df.columns.str.startswith(contrast_images_colname_head)]] = vdata
+		df[df.columns[df.columns.str.startswith(contrast_images_colname_head)]] = vdata #put the data where the contrast_images were
 		lmf = smf.ols(formula=formula,data=df).fit()
 		for output_var_idx, output_var in enumerate(output_vars):
 			res_p[output_var_idx,voxel_idx] = lmf.pvalues[output_var]
@@ -201,22 +204,28 @@ def extract_data_group(descriptives,contrast_images_colname_head='contrast_image
 	contrast_images_colname_head: str
 		Unique text for name(s) of column(s) where subject contrast images are
 		listed. e.g. contrast_image_ for: ['contrast_image_FA',contrast_image_T1']
+
+	Returns: data_matrix_full (3d np.ndarray), mask_id_start_stop (2d np.ndarray)
+		Full matrix of data from each subject and contrast provided.
+		0th dim: data elements (voxels)
+		1st dim: contrast images
+		2nd dim: subjects (or timepoints)
 	'''
 
 	if isinstance(descriptives,basestring): #should be a csv file, load it
 		df = pd.read_csv(descriptives,header=0)
-	else:
+	elif isinstance(descriptives, pd.DataFrame): #check if this is a pd.DataFrame
 		df = descriptives
 
 	df_contrasts_list = df[df.columns[df.columns.str.startswith(contrast_images_colname_head)]]
 	contrasts_list = df_contrasts_list.values.tolist()
 
-	for contrast_idx,contrasts in enumerate(contrasts_list): #TODO: this will fail with only a single individual's data
+	for contrasts_idx,contrasts in enumerate(contrasts_list): #TODO: this will fail with only a single individual's data
 		data_matrix, mask_id_start_stop = extract_data_multi_image(contrasts,mask_file=mask_file,image_thr=image_thr)
 		#if this is the first time through, we use the shape of the data_matrix to set our output size
-		if contrast_idx == 0:
+		if contrasts_idx == 0:
 			data_matrix_full = np.zeros((data_matrix.shape + (np.shape(contrasts_list)[0],)))
-		data_matrix_full[:,:,contrast_idx] = data_matrix
+		data_matrix_full[:,:,contrasts_idx] = data_matrix
 
 	return data_matrix_full, mask_id_start_stop
 
