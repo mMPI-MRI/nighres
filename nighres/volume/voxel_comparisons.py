@@ -163,7 +163,10 @@ def element_lm(data_matrix_full,descriptives,formula,output_vars,contrast_images
 		Variables that are of interest for output maps (t/p)
 		Intercept will automatically be included in the output so do not add it here
 	'''
+	#TODO: make multiprocessing friendly! (likely with change to create an interim storage type for big data? .hdf5?)
+
 	import statsmodels.formula.api as smf
+	#from multiprocessing import Pool
 
 	if np.ndim(data_matrix_full) == 1:
 		data_matrix_full = data_matrix_full[:,np.newaxis,np.newaxis]
@@ -205,7 +208,7 @@ def element_lm(data_matrix_full,descriptives,formula,output_vars,contrast_images
 	res['pvalues'] = res_p
 	res['rsquared_adj'] = res_rsquared_adj
 	res['variable_names'] = output_vars
-	return res_p
+	return res
 
 def extract_data_group(descriptives,contrast_images_colname_head='contrast_image_',mask_file=None):
 	'''
@@ -266,6 +269,7 @@ def write_element_results(res,descriptives,output_dir,file_name_head,contrast_im
 		fname = df[contrasts_list[0]][0]
 	ext = os.path.basename(fname).split('.',1)
 
+	out_data = np.zeros(img.shape)
 	if ext is 'nii.gz' or 'nii':
 		img = load_volume(fname)
 		head = img.get_header()
@@ -275,24 +279,27 @@ def write_element_results(res,descriptives,output_dir,file_name_head,contrast_im
 		else:
 			mask = np.ones(out_data.shape).astype(bool)
 
-		out_data = np.zeros(img.shape)
 		for var_idx, variable in enumerate(res['variable_names']):
 			#write the volume for pvals
 			out_data[mask] = res['pvalues'][var_idx]
 			out_fname = file_name_head + '_' + variable + '_p.nii.gz'
 			img = nb.Nifti1Image(out_data,aff,header=head)
 			save_volume(out_fname,img)
+			print(out_fname)
 
 			#write the volume for tvals
 			out_data[mask] = res['tvalues'][var_idx]
 			out_fname = file_name_head + '_' + variable + '_t.nii.gz'
 			img = nb.Nifti1Image(out_data,aff,header=head)
 			save_volume(out_fname,img)
+			print(out_fname)
+
 		#write the r2 volume
 		out_data[mask] = res['rsquared_adj']
 		out_fname = file_name_head + '_' + 'model' + '_r2adj.nii.gz'
 		img = nb.Nifti1Image(out_data,aff,header=head)
 		save_volume(out_fname,img)
+		print(out_fname)
 	elif ext is 'txt': #working with vertex files
 		pass
 
