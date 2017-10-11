@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-#import nibabel as nb
+import nibabel as nb
 #import os
 #import sys
 #import cbstools
@@ -141,9 +141,18 @@ def extract_data_multi_image(contrast_image_list, mask_file=None, image_thr=None
 			start = np.copy(stop)
 	return data_matrix, mask_id_start_stop.astype(int)
 
-def voxelwise_lm(data_matrix_full,descriptives,formula,output_vars,contrast_images_colname_head='contrast_image_'):
+def element_lm(data_matrix_full,descriptives,formula,output_vars,contrast_images_colname_head='contrast_image_'):
 	'''
+	Element-wise OLS linear model using statsmodels.formula.api.lm . Will correctly treat
+	from 1-3 dimensions if 0th dim is always contrast_images, 1st dim is always elements,
+	2nd always subjects. Works equally well with vectors of data, data from image
+	volumes, and data from vertices.
+
 	data_matrix_full: np.ndarray
+			Full matrix of data from each subject and contrast provided.
+			0th dim: contrast images
+			1st dim: data elements (voxels)
+			2nd dim: subjects (or timepoints, or both)
 	descriptives: csv|pd.DataFrame
 		.csv file or pandas dataframe containing:
 			1) full path(s) to subject contrast images (1 or more)
@@ -156,6 +165,11 @@ def voxelwise_lm(data_matrix_full,descriptives,formula,output_vars,contrast_imag
 	'''
 	import statsmodels.formula.api as smf
 
+	if np.ndim(data_matrix_full) == 1:
+		data_matrix_full = data_matrix_full[:,np.newaxis,np.newaxis]
+	elif np.ndim(data_matrix_full) == 2:
+		data_matrix_full = data_matrix_full[:,:,np.newaxis] #this may not work for all cases, depending on the assumptions made
+
 	if isinstance(output_vars,basestring):
 		output_vars = [output_vars]
 	output_vars.append('Intercept') #add the intercept for output too
@@ -164,7 +178,6 @@ def voxelwise_lm(data_matrix_full,descriptives,formula,output_vars,contrast_imag
 		df = pd.read_csv(descriptives,header=0)
 	elif isinstance(descriptives, pd.DataFrame):
 		df = descriptives
-	#TODO: is there a None condition? i.e., we just want to correlate things...?
 
 	# TODO: check stuffs
 	# check to make sure that the dimensions are compatible between descriptives
@@ -175,23 +188,23 @@ def voxelwise_lm(data_matrix_full,descriptives,formula,output_vars,contrast_imag
 	res_rsquared_adj = np.zeros((data_matrix_full.shape[1]))*np.nan #single row of R2, only one per model
 	#print(res_p.shape)
 
-	# this is extraordinarily slow, since we run linear models separatenly for each voxel :-/
-	#for voxel_idx,voxel in enumerate(range(5)):
-	for voxel_idx,voxel in enumerate(range(data_matrix_full.shape[1])):
-		vdata = np.transpose(np.squeeze(data_matrix_full[:,voxel,:]))
+	# this is likely quite slow, since we run linear models separatenly for each element :-/
+	for el_idx in range(data_matrix_full.shape[1]):
+		vdata = np.transpose(np.squeeze(data_matrix_full[:,el_idx,:]))
 		df[df.columns[df.columns.str.startswith(contrast_images_colname_head)]] = vdata #put the data where the contrast_images were
 		lmf = smf.ols(formula=formula,data=df).fit()
 		for output_var_idx, output_var in enumerate(output_vars):
-			res_p[output_var_idx,voxel_idx] = lmf.pvalues[output_var]
-			res_t[output_var_idx,voxel_idx] = lmf.tvalues[output_var]
-		res_rsquared_adj[voxel_idx] = lmf.rsquared_adj
+			res_p[output_var_idx,el_idx] = lmf.pvalues[output_var]
+			res_t[output_var_idx,el_idx] = lmf.tvalues[output_var]
+		res_rsquared_adj[el_idx] = lmf.rsquared_adj
 	res = {}
 	res['tvalues'] = res_t
 	res['pvalues'] = res_p
 	res['rsquared_adj'] = res_rsquared_adj
+	res['variable_names'] = output_vars
 	return res
 
-def extract_data_group(descriptives,contrast_images_colname_head='contrast_image_',mask_file=None,image_thr=0):
+def extract_data_group(descriptives,contrast_images_colname_head='contrast_image_',mask_file=None):
 	'''
 	Extract data from multiple subjects with one or more different contrast
 	images. Automatically recognises and pulls multiple contrast images if
@@ -207,9 +220,9 @@ def extract_data_group(descriptives,contrast_images_colname_head='contrast_image
 
 	Returns: data_matrix_full (3d np.ndarray), mask_id_start_stop (2d np.ndarray)
 		Full matrix of data from each subject and contrast provided.
-		0th dim: data elements (voxels)
-		1st dim: contrast images
-		2nd dim: subjects (or timepoints)
+		0th dim: contrast images
+		1st dim: data elements (voxels)
+		2nd dim: subjects (or timepoints, or both)
 	'''
 
 	if isinstance(descriptives,basestring): #should be a csv file, load it
@@ -221,13 +234,65 @@ def extract_data_group(descriptives,contrast_images_colname_head='contrast_image
 	contrasts_list = df_contrasts_list.values.tolist()
 
 	for contrasts_idx,contrasts in enumerate(contrasts_list): #TODO: this will fail with only a single individual's data
-		data_matrix, mask_id_start_stop = extract_data_multi_image(contrasts,mask_file=mask_file,image_thr=image_thr)
+		data_matrix, mask_id_start_stop = extract_data_multi_image(contrasts,mask_file=mask_file,image_thr=None) #no image thresh in group data, all data needs to be the same so use a mask
 		#if this is the first time through, we use the shape of the data_matrix to set our output size
 		if contrasts_idx == 0:
 			data_matrix_full = np.zeros((data_matrix.shape + (np.shape(contrasts_list)[0],)))
 		data_matrix_full[:,:,contrasts_idx] = data_matrix
 
 	return data_matrix_full, mask_id_start_stop
+
+def write_element_results(res,descriptives,output_dir,file_name_head,output_dir,contrast_images_colname_head='contrast_image_',mask_file=None):
+	'''
+	Write statistical results (pvals,tvals,rsquared_adj) back to the type of file
+	from which they were generated.
+	'''
+
+
+	if isinstance(descriptives,basestring): #should be a csv file, load it
+		df = pd.read_csv(descriptives,header=0)
+	elif isinstance(descriptives, pd.DataFrame):
+		df = descriptives
+
+	#determine type of file
+	df_contrasts_list = df[df.columns[df.columns.str.startswith(contrast_images_colname_head)]]
+	contrasts_list = df_contrasts_list.values.tolist()
+	if isinstance(contrasts_list, basestring):
+		fname = df[contrasts_list][0]
+	else:
+		fname = df[contrasts_list[0]][0]
+	ext = os.path.basename(fname).split('.',1)
+
+	if ext is 'nii.gz' or 'nii':
+		img = load_volume(fname)
+		head = img.get_header()
+		aff = img.get_affine()
+		if mask_file is not None:
+			mask = load_volume(mask_file).astype(bool)
+		else:
+			mask = np.ones_like(out_data.shape).astype(bool)
+
+		out_data = np.zeros_like(img.shape)
+		for var_idx, variable in enumerate(res['variable_names']):
+			#write the volume for pvals
+			out_data[mask] = res['pvalues'][var_idx]
+			out_fname = file_name_head + '_' + variable + '_p.nii.gz'
+			img = nb.Nifti1Image(out_data,aff,header=head)
+			save_volume(out_fname,img)
+
+			#write the volume for tvals
+			out_data[mask] = res['tvalues'][var_idx]
+			out_fname = file_name_head + '_' + variable + '_t.nii.gz'
+			img = nb.Nifti1Image(out_data,aff,header=head)
+			save_volume(out_fname,img)
+		#write the r2 volume
+		out_data[mask] = res['rsquared_adj']
+		out_fname = file_name_head + '_' + 'model' + '_r2adj.nii.gz'
+		img = nb.Nifti1Image(out_data,aff,header=head)
+		save_volume(out_fname,img)
+	elif ext is 'txt': #working with vertex files
+		pass
+
 
 def compute_image_pair_stats(data_matrix, example_data_file, mask_id_start_stop=None, mask=None):
 	'''
