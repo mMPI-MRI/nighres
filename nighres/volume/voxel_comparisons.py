@@ -192,19 +192,19 @@ def element_lm(data_matrix_full,descriptives,formula,output_vars,contrast_images
 	for el_idx in range(data_matrix_full.shape[1]):
 		vdata = np.transpose(np.squeeze(data_matrix_full[:,el_idx,:]))
 		df[df.columns[df.columns.str.startswith(contrast_images_colname_head)]] = vdata #put the data where the contrast_images were
-		#lmf = smf.ols(formula=formula,data=df).fit()
+		lmf = smf.ols(formula=formula,data=df).fit()
 		for output_var_idx, output_var in enumerate(output_vars):
 			#return df
 			#print df['contrast_image_1'][0] + df['contrast_image_2'][0]
-			res_p[output_var_idx,el_idx] = df['contrast_image_1'][0] + df['contrast_image_2'][0]
-		#	res_p[output_var_idx,el_idx] = lmf.pvalues[output_var]
-		#	res_t[output_var_idx,el_idx] = lmf.tvalues[output_var]
-		#res_rsquared_adj[el_idx] = lmf.rsquared_adj
-	#res = {}
-	#res['tvalues'] = res_t
-	#res['pvalues'] = res_p
-	#res['rsquared_adj'] = res_rsquared_adj
-	#res['variable_names'] = output_vars
+			#res_p[output_var_idx,el_idx] = df['contrast_image_1'][0] + df['contrast_image_2'][0]
+			res_p[output_var_idx,el_idx] = lmf.pvalues[output_var]
+			res_t[output_var_idx,el_idx] = lmf.tvalues[output_var]
+		res_rsquared_adj[el_idx] = lmf.rsquared_adj
+	res = {}
+	res['tvalues'] = res_t
+	res['pvalues'] = res_p
+	res['rsquared_adj'] = res_rsquared_adj
+	res['variable_names'] = output_vars
 	return res_p
 
 def extract_data_group(descriptives,contrast_images_colname_head='contrast_image_',mask_file=None):
