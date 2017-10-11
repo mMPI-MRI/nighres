@@ -102,7 +102,7 @@ def extract_data_multi_image(contrast_image_list, mask_file=None, image_thr=None
 		mask_img = load_volume(mask_file)
 		mask_data = mask_img.get_data()
 	else:
-		mask_data = np.ones_like(load_volume(contrast_image_list[0]).shape)
+		mask_data = np.ones(load_volume(contrast_image_list[0]).shape)
 		if image_thr is not None:
 			mask_data[load_volume(contrast_image_list[0]).get_data() < image_thr] = 0
 
@@ -192,17 +192,20 @@ def element_lm(data_matrix_full,descriptives,formula,output_vars,contrast_images
 	for el_idx in range(data_matrix_full.shape[1]):
 		vdata = np.transpose(np.squeeze(data_matrix_full[:,el_idx,:]))
 		df[df.columns[df.columns.str.startswith(contrast_images_colname_head)]] = vdata #put the data where the contrast_images were
-		lmf = smf.ols(formula=formula,data=df).fit()
+		#lmf = smf.ols(formula=formula,data=df).fit()
 		for output_var_idx, output_var in enumerate(output_vars):
-			res_p[output_var_idx,el_idx] = lmf.pvalues[output_var]
-			res_t[output_var_idx,el_idx] = lmf.tvalues[output_var]
-		res_rsquared_adj[el_idx] = lmf.rsquared_adj
-	res = {}
-	res['tvalues'] = res_t
-	res['pvalues'] = res_p
-	res['rsquared_adj'] = res_rsquared_adj
-	res['variable_names'] = output_vars
-	return res
+			#return df
+			#print df['contrast_image_1'][0] + df['contrast_image_2'][0]
+			res_p[output_var_idx,el_idx] = df['contrast_image_1'][0] + df['contrast_image_2'][0]
+		#	res_p[output_var_idx,el_idx] = lmf.pvalues[output_var]
+		#	res_t[output_var_idx,el_idx] = lmf.tvalues[output_var]
+		#res_rsquared_adj[el_idx] = lmf.rsquared_adj
+	#res = {}
+	#res['tvalues'] = res_t
+	#res['pvalues'] = res_p
+	#res['rsquared_adj'] = res_rsquared_adj
+	#res['variable_names'] = output_vars
+	return res_p
 
 def extract_data_group(descriptives,contrast_images_colname_head='contrast_image_',mask_file=None):
 	'''
@@ -242,7 +245,7 @@ def extract_data_group(descriptives,contrast_images_colname_head='contrast_image
 
 	return data_matrix_full, mask_id_start_stop
 
-def write_element_results(res,descriptives,output_dir,file_name_head,output_dir,contrast_images_colname_head='contrast_image_',mask_file=None):
+def write_element_results(res,descriptives,output_dir,file_name_head,contrast_images_colname_head='contrast_image_',mask_file=None):
 	'''
 	Write statistical results (pvals,tvals,rsquared_adj) back to the type of file
 	from which they were generated.
@@ -270,9 +273,9 @@ def write_element_results(res,descriptives,output_dir,file_name_head,output_dir,
 		if mask_file is not None:
 			mask = load_volume(mask_file).astype(bool)
 		else:
-			mask = np.ones_like(out_data.shape).astype(bool)
+			mask = np.ones(out_data.shape).astype(bool)
 
-		out_data = np.zeros_like(img.shape)
+		out_data = np.zeros(img.shape)
 		for var_idx, variable in enumerate(res['variable_names']):
 			#write the volume for pvals
 			out_data[mask] = res['pvalues'][var_idx]
