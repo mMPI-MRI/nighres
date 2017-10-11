@@ -166,6 +166,8 @@ def element_lm(data_matrix_full,descriptives,formula,output_vars,contrast_images
 	#TODO: make multiprocessing friendly! (likely with change to create an interim storage type for big data? .hdf5?)
 
 	import statsmodels.formula.api as smf
+	from __future__ import print_function
+	from sys import stdout as stdout
 	#from multiprocessing import Pool
 
 	if np.ndim(data_matrix_full) == 1:
@@ -180,7 +182,7 @@ def element_lm(data_matrix_full,descriptives,formula,output_vars,contrast_images
 	if isinstance(descriptives,basestring): #should be a csv file, load it
 		df = pd.read_csv(descriptives,header=0)
 	elif isinstance(descriptives, pd.DataFrame):
-		df = descriptives
+		df = descriptives.copy()
 
 	# TODO: check stuffs
 	# check to make sure that the dimensions are compatible between descriptives
@@ -203,6 +205,11 @@ def element_lm(data_matrix_full,descriptives,formula,output_vars,contrast_images
 			res_p[output_var_idx,el_idx] = lmf.pvalues[output_var]
 			res_t[output_var_idx,el_idx] = lmf.tvalues[output_var]
 		res_rsquared_adj[el_idx] = lmf.rsquared_adj
+#		progress = (el_idx + 1) / len(data_matrix_full.shape[1])
+		print(" Processed: {0}/{1}".format(el_idx,data_matrix_full.shape[1]),end='\r')
+        #stdout.write(" Processed: {0}/{1} {2}".format(el_idx,data_matrix_full.shape[1],"\r"))
+        stdout.flush()
+
 	res = {}
 	res['tvalues'] = res_t
 	res['pvalues'] = res_p
@@ -253,7 +260,7 @@ def write_element_results(res,descriptives,output_dir,file_name_head,contrast_im
 	Write statistical results (pvals,tvals,rsquared_adj) back to the type of file
 	from which they were generated.
 	'''
-
+	import os
 
 	if isinstance(descriptives,basestring): #should be a csv file, load it
 		df = pd.read_csv(descriptives,header=0)
@@ -263,40 +270,47 @@ def write_element_results(res,descriptives,output_dir,file_name_head,contrast_im
 	#determine type of file
 	df_contrasts_list = df[df.columns[df.columns.str.startswith(contrast_images_colname_head)]]
 	contrasts_list = df_contrasts_list.values.tolist()
+	#return df_contrasts_list
 	if isinstance(contrasts_list, basestring):
-		fname = df[contrasts_list][0]
+		fname = contrasts_list[0]
 	else:
-		fname = df[contrasts_list[0]][0]
+		fname = contrasts_list[0][0]
 	ext = os.path.basename(fname).split('.',1)
 
+	img = load_volume(fname)
+	head = img.get_header()
+	aff = img.get_affine()
 	out_data = np.zeros(img.shape)
 	if ext is 'nii.gz' or 'nii':
-		img = load_volume(fname)
-		head = img.get_header()
-		aff = img.get_affine()
 		if mask_file is not None:
-			mask = load_volume(mask_file).astype(bool)
+			mask = load_volume(mask_file).get_data().astype(bool)
 		else:
 			mask = np.ones(out_data.shape).astype(bool)
 
 		for var_idx, variable in enumerate(res['variable_names']):
 			#write the volume for pvals
 			out_data[mask] = res['pvalues'][var_idx]
-			out_fname = file_name_head + '_' + variable + '_p.nii.gz'
+			out_fname = os.path.join(output_dir,file_name_head + '_' + variable + '_p.nii.gz')
+			head['cal_max'] = out_data.max()
+			head['cal_min'] = out_data.min()
 			img = nb.Nifti1Image(out_data,aff,header=head)
 			save_volume(out_fname,img)
 			print(out_fname)
 
 			#write the volume for tvals
 			out_data[mask] = res['tvalues'][var_idx]
-			out_fname = file_name_head + '_' + variable + '_t.nii.gz'
+			out_fname = os.path.join(output_dir,file_name_head + '_' + variable + '_t.nii.gz')
+			head['cal_max'] = out_data.max()
+			head['cal_min'] = out_data.min()
 			img = nb.Nifti1Image(out_data,aff,header=head)
 			save_volume(out_fname,img)
 			print(out_fname)
 
 		#write the r2 volume
 		out_data[mask] = res['rsquared_adj']
-		out_fname = file_name_head + '_' + 'model' + '_r2adj.nii.gz'
+		out_fname = os.path.join(output_dir,file_name_head + '_' + 'model' + '_r2adj.nii.gz')
+		head['cal_max'] = out_data.max()
+		head['cal_min'] = out_data.min()
 		img = nb.Nifti1Image(out_data,aff,header=head)
 		save_volume(out_fname,img)
 		print(out_fname)
