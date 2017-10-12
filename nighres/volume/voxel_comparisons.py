@@ -334,7 +334,7 @@ def extract_data_group(descriptives,contrast_images_colname_head='contrast_image
 
 	return data_matrix_full, mask_id_start_stop
 
-def write_element_results(res,descriptives,output_dir,file_name_head,contrast_images_colname_head='contrast_image_',mask_file=None):
+def write_element_results(res,descriptives,output_dir,file_name_head,contrast_images_colname_head='contrast_image_',mask_file=None,fdr_p='bh',alpha=0.05):
 	'''
 	Write statistical results (pvals,tvals,rsquared_adj) back to the type of file
 	from which they were generated.
@@ -385,6 +385,30 @@ def write_element_results(res,descriptives,output_dir,file_name_head,contrast_im
 			save_volume(out_fname,img)
 			#print(out_fname)
 
+			if fdr_p is not None:
+				import statsmodels.stats.multitest as mt
+				if fdr_p is 'bh_twostage'
+					rejected, cor_p, m0, alpha_stages = mt.fdrcorrection_twostage(res['pvalues'][var_idx],alpha=alpha,method='bh',is_sorted=False)
+				elif fdr_p is 'bh':
+					rejected, cor_p = mt.fdrcorrection(res['pvalues'][var_idx],alpha=alpha,method='indep',is_sorted=False))
+				#write the volume for corrected pvals
+				out_data[mask] = cor_p
+				out_fname = os.path.join(output_dir,file_name_head + '_' + variable + '_fdr_cor_p.nii.gz')
+				head['cal_max'] = out_data.max()
+				head['cal_min'] = out_data.min()
+				img = nb.Nifti1Image(out_data,aff,header=head)
+				save_volume(out_fname,img)
+
+				#write the volume for thresholded t-vals
+				temp_t = res['tvalues'][var_idx]
+				temp_t[rejected] = 0
+				out_data[mask] = temp_t
+				out_fname = os.path.join(output_dir,file_name_head + '_' + variable + '_fdr_cor_t.nii.gz')
+				head['cal_max'] = out_data.max()
+				head['cal_min'] = out_data.min()
+				img = nb.Nifti1Image(out_data,aff,header=head)
+				save_volume(out_fname,img)
+
 		#write the r2 volume
 		out_data[mask] = res['rsquared_adj']
 		out_fname = os.path.join(output_dir,file_name_head + '_' + 'model' + '_r2adj.nii.gz')
@@ -393,6 +417,7 @@ def write_element_results(res,descriptives,output_dir,file_name_head,contrast_im
 		img = nb.Nifti1Image(out_data,aff,header=head)
 		save_volume(out_fname,img)
 		#print(out_fname)
+
 	elif ext is 'txt': #working with vertex files
 		pass
 
