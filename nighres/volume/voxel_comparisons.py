@@ -193,6 +193,8 @@ def element_lm(data_matrix_full,descriptives,formula,output_vars,contrast_images
 		mixed_model = True
 	else:
 		mixed_model = False
+
+	#quick attempt to make the input matrix well behaved if we only have 1d or 2d data (1d should work fine, 2d likely not)
 	if np.ndim(data_matrix_full) == 1:
 		data_matrix_full = data_matrix_full[:,np.newaxis,np.newaxis]
 	elif np.ndim(data_matrix_full) == 2:
@@ -206,10 +208,6 @@ def element_lm(data_matrix_full,descriptives,formula,output_vars,contrast_images
 		df = pd.read_csv(descriptives,header=0)
 	elif isinstance(descriptives, pd.DataFrame):
 		df = descriptives.copy()
-
-	# TODO: check stuffs
-	# check to make sure that the dimensions are compatible between descriptives
-	# and data_matrix_full
 
 	res_p = np.zeros((len(output_vars),data_matrix_full.shape[1]))*np.nan #each output var gets its own row
 	res_t = np.copy(res_p)*np.nan
@@ -225,20 +223,15 @@ def element_lm(data_matrix_full,descriptives,formula,output_vars,contrast_images
 				lmf = smf.ols(formula=formula,data=df).fit()
 			else:
 				lmf = smf.mixedlm(formula=formula,data=df,**kwargs).fit()
-#				print(lmf.summary())
-#				return lmf
 			for output_var_idx, output_var in enumerate(output_vars):
-				#return df
-				#print df['contrast_image_1'][0] + df['contrast_image_2'][0]
-				#res_p[output_var_idx,el_idx] = df['contrast_image_1'][0] + df['contrast_image_2'][0]
 				res_p[output_var_idx,el_idx] = lmf.pvalues[output_var]
 				res_t[output_var_idx,el_idx] = lmf.tvalues[output_var]
 			if not mixed_model:
 				res_rsquared_adj[el_idx] = lmf.rsquared_adj
-	#		progress = (el_idx + 1) / len(data_matrix_full.shape[1])
-			print(" Processed: {0}/{1}".format(el_idx,data_matrix_full.shape[1]),end='\r')
+			#progress = (el_idx + 1) / len(data_matrix_full.shape[1])
+			#print(" Processed: {0}/{1}".format(el_idx,data_matrix_full.shape[1]),end='\r')
 	        #stdout.write(" Processed: {0}/{1} {2}".format(el_idx,data_matrix_full.shape[1],"\r"))
-	        stdout.flush()
+	        #stdout.flush()
 	else:
 		#memmap the arrays so that we can write to them from all processes
 		#as shown here: https://pythonhosted.org/joblib/parallel.html#writing-parallel-computation-results-in-shared-memory
