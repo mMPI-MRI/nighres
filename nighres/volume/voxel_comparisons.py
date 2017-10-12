@@ -142,7 +142,11 @@ def extract_data_multi_image(contrast_image_list, mask_file=None, image_thr=None
 			start = np.copy(stop)
 	return data_matrix, mask_id_start_stop.astype(int)
 
-def run_lm(d,formula,el,dframe,colname_head,output_vars,res_t,res_p,res_rsquared_adj):
+def _run_lm(d,formula,el,dframe,colname_head,output_vars,res_t,res_p,res_rsquared_adj):
+	'''
+	For parallelisation of statsmodels call to statsmodels.formula.api.ols .
+	Requires memmapped input/output data.
+	'''
 	import statsmodels.formula.api as smf
 	vdata = np.transpose(np.squeeze(d[:,el,:]))
 	dframe[dframe.columns[dframe.columns.str.startswith(colname_head)]] = vdata #put the data where the contrast_images were
@@ -247,7 +251,7 @@ def element_lm(data_matrix_full,descriptives,formula,output_vars,contrast_images
 			print('Could not create memmap files, make sure that {0} exists'.format(tmp_folder))
 		print('Memmapping input data and results outputs for parallelisation to {0}'.format(tmp_folder))
 		#now parallelise for speeds beyond your wildest imagination, thanks Gael!
-		Parallel(n_jobs=n_jobs)(delayed(run_lm)(data_matrix_full,formula,el_idx,df,contrast_images_colname_head,output_vars,res_t,res_p,res_rsquared_adj)
+		Parallel(n_jobs=n_jobs)(delayed(_run_lm)(data_matrix_full,formula,el_idx,df,contrast_images_colname_head,output_vars,res_t,res_p,res_rsquared_adj)
 								for el_idx in range(data_matrix_full.shape[1]))
 
 	res = {}
