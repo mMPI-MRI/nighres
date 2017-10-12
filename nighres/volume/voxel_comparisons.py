@@ -157,12 +157,13 @@ def _run_lm(d,formula,el,dframe,colname_head,output_vars,res_t,res_p,res_rsquare
 		res_t[output_var_idx,el] = lmf.tvalues[output_var]
 	res_rsquared_adj[el] = lmf.rsquared_adj
 
-def element_lm(data_matrix_full,descriptives,formula,output_vars,contrast_images_colname_head='contrast_image_',n_procs=1,tmp_folder=None):
+def element_lm(data_matrix_full,descriptives,formula,output_vars,contrast_images_colname_head='contrast_image_',n_procs=1,tmp_folder=None,**kwargs):
 	'''
 	Element-wise OLS linear model using statsmodels.formula.api.lm . Will correctly treat
 	from 1-3 dimensions if 0th dim is always contrast_images, 1st dim is always elements,
 	2nd always subjects. Works equally well with vectors of data, data from image
 	volumes, and data from vertices.
+	Adding the kwarg groups calls a mixedlm.
 
 	data_matrix_full: np.ndarray
 			Full matrix of data from each subject and contrast provided.
@@ -179,7 +180,6 @@ def element_lm(data_matrix_full,descriptives,formula,output_vars,contrast_images
 		Variables that are of interest for output maps (t/p)
 		Intercept will automatically be included in the output so do not add it here
 	'''
-	#TODO: make multiprocessing friendly! (likely with change to create an interim storage type for big data? .hdf5?)
 	import statsmodels.formula.api as smf
 	from sys import stdout as stdout
 	import shutil
@@ -189,7 +189,10 @@ def element_lm(data_matrix_full,descriptives,formula,output_vars,contrast_images
 	from joblib import Parallel, delayed, load, dump
 
 	start_t = time.time()
-
+	if 'groups' in kwargs:
+		mixed_model = True
+	else:
+		mixed_model = False
 	if np.ndim(data_matrix_full) == 1:
 		data_matrix_full = data_matrix_full[:,np.newaxis,np.newaxis]
 	elif np.ndim(data_matrix_full) == 2:
@@ -214,18 +217,24 @@ def element_lm(data_matrix_full,descriptives,formula,output_vars,contrast_images
 	#print(res_p.shape)
 
 	# this is likely quite slow, since we run linear models separatenly for each element :-/
-	if n_jobs == 1:
+	if n_procs == 1:
 		for el_idx in range(data_matrix_full.shape[1]):
 			vdata = np.transpose(np.squeeze(data_matrix_full[:,el_idx,:]))
 			df[df.columns[df.columns.str.startswith(contrast_images_colname_head)]] = vdata #put the data where the contrast_images were
-			lmf = smf.ols(formula=formula,data=df).fit()
+			if not mixed_model:
+				lmf = smf.ols(formula=formula,data=df).fit()
+			else:
+				lmf = smf.mixedlm(formula=formula,data=df,**kwargs).fit()
+#				print(lmf.summary())
+#				return lmf
 			for output_var_idx, output_var in enumerate(output_vars):
 				#return df
 				#print df['contrast_image_1'][0] + df['contrast_image_2'][0]
 				#res_p[output_var_idx,el_idx] = df['contrast_image_1'][0] + df['contrast_image_2'][0]
 				res_p[output_var_idx,el_idx] = lmf.pvalues[output_var]
 				res_t[output_var_idx,el_idx] = lmf.tvalues[output_var]
-			res_rsquared_adj[el_idx] = lmf.rsquared_adj
+			if not mixed_model:
+				res_rsquared_adj[el_idx] = lmf.rsquared_adj
 	#		progress = (el_idx + 1) / len(data_matrix_full.shape[1])
 			print(" Processed: {0}/{1}".format(el_idx,data_matrix_full.shape[1]),end='\r')
 	        #stdout.write(" Processed: {0}/{1} {2}".format(el_idx,data_matrix_full.shape[1],"\r"))
@@ -250,8 +259,11 @@ def element_lm(data_matrix_full,descriptives,formula,output_vars,contrast_images
 			print('Could not create memmap files, make sure that {0} exists'.format(tmp_folder))
 		print('Memmapping input data and results outputs for parallelisation to {0}'.format(tmp_folder))
 		#now parallelise for speeds beyond your wildest imagination, thanks Gael!
-		Parallel(n_jobs=n_procs)(delayed(_run_lm)(data_matrix_full,formula,el_idx,df,contrast_images_colname_head,output_vars,res_t,res_p,res_rsquared_adj)
-								for el_idx in range(data_matrix_full.shape[1]))
+		if not mixed_model:
+			Parallel(n_jobs=n_procs)(delayed(_run_lm)(data_matrix_full,formula,el_idx,df,contrast_images_colname_head,output_vars,res_t,res_p,res_rsquared_adj)
+									for el_idx in range(data_matrix_full.shape[1]))
+		else:
+			pass
 
 	res = {}
 	res['tvalues'] = np.copy(res_t)
@@ -260,7 +272,7 @@ def element_lm(data_matrix_full,descriptives,formula,output_vars,contrast_images
 	res['variable_names'] = output_vars
 
 	#cleanup our mess
-	if n_jobs is not 1:
+	if n_procs is not 1:
 		try:
 			shutil.rmtree(tmp_folder)
 		except:
