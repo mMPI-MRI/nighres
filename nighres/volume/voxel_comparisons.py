@@ -157,6 +157,22 @@ def _run_lm(d,formula,el,dframe,colname_head,output_vars,res_t,res_p,res_rsquare
 		res_t[output_var_idx,el] = lmf.tvalues[output_var]
 	res_rsquared_adj[el] = lmf.rsquared_adj
 
+#INITIAL TRY: NOT TESTED
+def _run_mixedlm(d,formula,el,dframe,colname_head,output_vars,res_t,res_p,res_rsquared_adj,**kwargs):
+	'''
+	For parallelisation of statsmodels call to statsmodels.formula.api.ols .
+	Requires memmapped input/output data.
+	Places results in global variables, returns nothing
+	'''
+	import statsmodels.formula.api as smf
+	vdata = np.transpose(np.squeeze(d[:,el,:]))
+	dframe[dframe.columns[dframe.columns.str.startswith(colname_head)]] = vdata #put the data where the contrast_images were
+	lmf = smf.mixedlm(formula=formula,data=dframe,**kwargs).fit()
+	for output_var_idx, output_var in enumerate(output_vars):
+		res_p[output_var_idx,el] = lmf.pvalues[output_var]
+		res_t[output_var_idx,el] = lmf.tvalues[output_var]
+	#res_rsquared_adj[el] = lmf.rsquared_adj
+
 def element_lm(data_matrix_full,descriptives,formula,output_vars,contrast_images_colname_head='contrast_image_',n_procs=1,tmp_folder=None,**kwargs):
 	'''
 	Element-wise OLS linear model using statsmodels.formula.api.lm . Will correctly treat
@@ -256,7 +272,8 @@ def element_lm(data_matrix_full,descriptives,formula,output_vars,contrast_images
 			Parallel(n_jobs=n_procs)(delayed(_run_lm)(data_matrix_full,formula,el_idx,df,contrast_images_colname_head,output_vars,res_t,res_p,res_rsquared_adj)
 									for el_idx in range(data_matrix_full.shape[1]))
 		else:
-			pass
+			Parallel(n_jobs=n_procs)(delayed(_run_lm)(data_matrix_full,formula,el_idx,df,contrast_images_colname_head,output_vars,res_t,res_p,res_rsquared_adj,**kwargs)
+									for el_idx in range(data_matrix_full.shape[1]))
 
 	res = {}
 	res['tvalues'] = np.copy(res_t)
