@@ -401,7 +401,7 @@ def write_element_results(res,descriptives,output_dir,file_name_head,contrast_im
 
 				#write the volume for thresholded t-vals
 				temp_t = res['tvalues'][var_idx]
-				temp_t[rejected] = 0
+				temp_t[~rejected] = 0 #setto 0 when fail to reject null
 				out_data[mask] = temp_t
 				out_fname = os.path.join(output_dir,file_name_head + '_' + variable + '_fdr_cor_t.nii.gz')
 				head['cal_max'] = out_data.max()
