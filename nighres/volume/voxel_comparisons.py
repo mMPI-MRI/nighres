@@ -1,6 +1,8 @@
+from __future__ import print_function
 import numpy as np
 import pandas as pd
 import nibabel as nb
+
 #import os
 #import sys
 #import cbstools
@@ -94,7 +96,6 @@ def extract_data_multi_image(contrast_image_list, mask_file=None, image_thr=None
 		ONLY used when mask_file is not provided. Don't be lazy, provide
 		a mask if you can.
 	'''
-
 	if isinstance(contrast_image_list,basestring):
 		contrast_image_list = [contrast_image_list]
 
@@ -141,7 +142,19 @@ def extract_data_multi_image(contrast_image_list, mask_file=None, image_thr=None
 			start = np.copy(stop)
 	return data_matrix, mask_id_start_stop.astype(int)
 
-def element_lm(data_matrix_full,descriptives,formula,output_vars,contrast_images_colname_head='contrast_image_'):
+def run_lm(d,formula,el,dframe,colname_head,output_vars,res_t,res_p,res_rsquared_adj):
+	import statsmodels.formula.api as smf
+	vdata = np.transpose(np.squeeze(d[:,el,:]))
+	dframe[dframe.columns[dframe.columns.str.startswith(colname_head)]] = vdata #put the data where the contrast_images were
+	lmf = smf.ols(formula=formula,data=dframe).fit()
+	#print(output_vars)
+	for output_var_idx, output_var in enumerate(output_vars):
+		#print(output_var), print(lmf.pvalues[output_var])
+		res_p[output_var_idx,el] = lmf.pvalues[output_var]
+		res_t[output_var_idx,el] = lmf.tvalues[output_var]
+	res_rsquared_adj[el] = lmf.rsquared_adj
+
+def element_lm(data_matrix_full,descriptives,formula,output_vars,contrast_images_colname_head='contrast_image_',n_jobs=1,tmp_folder=None):
 	'''
 	Element-wise OLS linear model using statsmodels.formula.api.lm . Will correctly treat
 	from 1-3 dimensions if 0th dim is always contrast_images, 1st dim is always elements,
@@ -164,11 +177,15 @@ def element_lm(data_matrix_full,descriptives,formula,output_vars,contrast_images
 		Intercept will automatically be included in the output so do not add it here
 	'''
 	#TODO: make multiprocessing friendly! (likely with change to create an interim storage type for big data? .hdf5?)
-
 	import statsmodels.formula.api as smf
-	from __future__ import print_function
 	from sys import stdout as stdout
-	#from multiprocessing import Pool
+	import shutil
+	import os
+	import time
+	import tempfile
+	from joblib import Parallel, delayed, load, dump
+
+	start_t = time.time()
 
 	if np.ndim(data_matrix_full) == 1:
 		data_matrix_full = data_matrix_full[:,np.newaxis,np.newaxis]
@@ -194,27 +211,59 @@ def element_lm(data_matrix_full,descriptives,formula,output_vars,contrast_images
 	#print(res_p.shape)
 
 	# this is likely quite slow, since we run linear models separatenly for each element :-/
-	for el_idx in range(data_matrix_full.shape[1]):
-		vdata = np.transpose(np.squeeze(data_matrix_full[:,el_idx,:]))
-		df[df.columns[df.columns.str.startswith(contrast_images_colname_head)]] = vdata #put the data where the contrast_images were
-		lmf = smf.ols(formula=formula,data=df).fit()
-		for output_var_idx, output_var in enumerate(output_vars):
-			#return df
-			#print df['contrast_image_1'][0] + df['contrast_image_2'][0]
-			#res_p[output_var_idx,el_idx] = df['contrast_image_1'][0] + df['contrast_image_2'][0]
-			res_p[output_var_idx,el_idx] = lmf.pvalues[output_var]
-			res_t[output_var_idx,el_idx] = lmf.tvalues[output_var]
-		res_rsquared_adj[el_idx] = lmf.rsquared_adj
-#		progress = (el_idx + 1) / len(data_matrix_full.shape[1])
-		print(" Processed: {0}/{1}".format(el_idx,data_matrix_full.shape[1]),end='\r')
-        #stdout.write(" Processed: {0}/{1} {2}".format(el_idx,data_matrix_full.shape[1],"\r"))
-        stdout.flush()
+	if n_jobs == 1:
+		for el_idx in range(data_matrix_full.shape[1]):
+			vdata = np.transpose(np.squeeze(data_matrix_full[:,el_idx,:]))
+			df[df.columns[df.columns.str.startswith(contrast_images_colname_head)]] = vdata #put the data where the contrast_images were
+			lmf = smf.ols(formula=formula,data=df).fit()
+			for output_var_idx, output_var in enumerate(output_vars):
+				#return df
+				#print df['contrast_image_1'][0] + df['contrast_image_2'][0]
+				#res_p[output_var_idx,el_idx] = df['contrast_image_1'][0] + df['contrast_image_2'][0]
+				res_p[output_var_idx,el_idx] = lmf.pvalues[output_var]
+				res_t[output_var_idx,el_idx] = lmf.tvalues[output_var]
+			res_rsquared_adj[el_idx] = lmf.rsquared_adj
+	#		progress = (el_idx + 1) / len(data_matrix_full.shape[1])
+			print(" Processed: {0}/{1}".format(el_idx,data_matrix_full.shape[1]),end='\r')
+	        #stdout.write(" Processed: {0}/{1} {2}".format(el_idx,data_matrix_full.shape[1],"\r"))
+	        stdout.flush()
+	else:
+		#memmap the arrays so that we can write to them from all processes
+		#as shown here: https://pythonhosted.org/joblib/parallel.html#writing-parallel-computation-results-in-shared-memory
+		if tmp_folder is None:
+			tmp_folder = tempfile.mkdtemp()
+		try:
+			res_t_name = os.path.join(tmp_folder,'res_t')
+			res_p_name = os.path.join(tmp_folder,'res_p')
+			res_rsq_name = os.path.join(tmp_folder,'res_rsq')
+			res_t = np.memmap(res_t_name, dtype=res_t.dtype,shape=res_t.shape,mode='w+')
+			res_p = np.memmap(res_p_name, dtype=res_p.dtype,shape=res_p.shape,mode='w+')
+			res_rsquared_adj = np.memmap(res_rsq_name, dtype=res_rsquared_adj.dtype,shape=res_rsquared_adj.shape,mode='w+')
+			dump(data_matrix_full, os.path.join(tmp_folder,'data_matrix_full'))
+			data_matrix_full = load(os.path.join(tmp_folder,'data_matrix_full'),mmap_mode='r')
+			dump(df,os.path.join(tmp_folder,'descriptives_df'))
+			df = load(os.path.join(tmp_folder,'descriptives_df'),mmap_mode='r')
+		except:
+			print('Could not create memmap files, make sure that {0} exists'.format(tmp_folder))
+		print('Memmapping input data and results outputs for parallelisation to {0}'.format(tmp_folder))
+		#now parallelise for speeds beyond your wildest imagination, thanks Gael!
+		Parallel(n_jobs=n_jobs)(delayed(run_lm)(data_matrix_full,formula,el_idx,df,contrast_images_colname_head,output_vars,res_t,res_p,res_rsquared_adj)
+								for el_idx in range(data_matrix_full.shape[1]))
 
 	res = {}
-	res['tvalues'] = res_t
-	res['pvalues'] = res_p
-	res['rsquared_adj'] = res_rsquared_adj
+	res['tvalues'] = np.copy(res_t)
+	res['pvalues'] = np.copy(res_p)
+	res['rsquared_adj'] = np.copy(res_rsquared_adj)
 	res['variable_names'] = output_vars
+
+	#cleanup our mess
+	if n_jobs is not 1:
+		try:
+			shutil.rmtree(tmp_folder)
+		except:
+			print("Failed to delete: {0}".format(tmp_folder))
+	end_t = time.time()
+	print("Performed {0} linear models with data from {1} subjects/timepoints in {2:.2f}s.".format(data_matrix_full.shape[1],data_matrix_full.shape[2],end_t-start_t))
 	return res
 
 def extract_data_group(descriptives,contrast_images_colname_head='contrast_image_',mask_file=None):
@@ -237,6 +286,8 @@ def extract_data_group(descriptives,contrast_images_colname_head='contrast_image
 		1st dim: data elements (voxels)
 		2nd dim: subjects (or timepoints, or both)
 	'''
+	import time
+	start_t = time.time()
 
 	if isinstance(descriptives,basestring): #should be a csv file, load it
 		df = pd.read_csv(descriptives,header=0)
@@ -252,6 +303,9 @@ def extract_data_group(descriptives,contrast_images_colname_head='contrast_image
 		if contrasts_idx == 0:
 			data_matrix_full = np.zeros((data_matrix.shape + (np.shape(contrasts_list)[0],)))
 		data_matrix_full[:,:,contrasts_idx] = data_matrix
+
+	end_t = time.time()
+	print("Data matrix of shape {1} (contrast, element, subject) extracted in {0:.2f} secs".format((end_t-start_t),data_matrix_full.shape))
 
 	return data_matrix_full, mask_id_start_stop
 
@@ -295,7 +349,7 @@ def write_element_results(res,descriptives,output_dir,file_name_head,contrast_im
 			head['cal_min'] = out_data.min()
 			img = nb.Nifti1Image(out_data,aff,header=head)
 			save_volume(out_fname,img)
-			print(out_fname)
+			#print(out_fname)
 
 			#write the volume for tvals
 			out_data[mask] = res['tvalues'][var_idx]
@@ -304,7 +358,7 @@ def write_element_results(res,descriptives,output_dir,file_name_head,contrast_im
 			head['cal_min'] = out_data.min()
 			img = nb.Nifti1Image(out_data,aff,header=head)
 			save_volume(out_fname,img)
-			print(out_fname)
+			#print(out_fname)
 
 		#write the r2 volume
 		out_data[mask] = res['rsquared_adj']
@@ -313,7 +367,7 @@ def write_element_results(res,descriptives,output_dir,file_name_head,contrast_im
 		head['cal_min'] = out_data.min()
 		img = nb.Nifti1Image(out_data,aff,header=head)
 		save_volume(out_fname,img)
-		print(out_fname)
+		#print(out_fname)
 	elif ext is 'txt': #working with vertex files
 		pass
 
