@@ -146,19 +146,18 @@ def _run_lm(d,formula,el,dframe,colname_head,output_vars,res_t,res_p,res_rsquare
 	'''
 	For parallelisation of statsmodels call to statsmodels.formula.api.ols .
 	Requires memmapped input/output data.
+	Places results in global variables, returns nothing
 	'''
 	import statsmodels.formula.api as smf
 	vdata = np.transpose(np.squeeze(d[:,el,:]))
 	dframe[dframe.columns[dframe.columns.str.startswith(colname_head)]] = vdata #put the data where the contrast_images were
 	lmf = smf.ols(formula=formula,data=dframe).fit()
-	#print(output_vars)
 	for output_var_idx, output_var in enumerate(output_vars):
-		#print(output_var), print(lmf.pvalues[output_var])
 		res_p[output_var_idx,el] = lmf.pvalues[output_var]
 		res_t[output_var_idx,el] = lmf.tvalues[output_var]
 	res_rsquared_adj[el] = lmf.rsquared_adj
 
-def element_lm(data_matrix_full,descriptives,formula,output_vars,contrast_images_colname_head='contrast_image_',n_jobs=1,tmp_folder=None):
+def element_lm(data_matrix_full,descriptives,formula,output_vars,contrast_images_colname_head='contrast_image_',n_procs=1,tmp_folder=None):
 	'''
 	Element-wise OLS linear model using statsmodels.formula.api.lm . Will correctly treat
 	from 1-3 dimensions if 0th dim is always contrast_images, 1st dim is always elements,
@@ -251,7 +250,7 @@ def element_lm(data_matrix_full,descriptives,formula,output_vars,contrast_images
 			print('Could not create memmap files, make sure that {0} exists'.format(tmp_folder))
 		print('Memmapping input data and results outputs for parallelisation to {0}'.format(tmp_folder))
 		#now parallelise for speeds beyond your wildest imagination, thanks Gael!
-		Parallel(n_jobs=n_jobs)(delayed(_run_lm)(data_matrix_full,formula,el_idx,df,contrast_images_colname_head,output_vars,res_t,res_p,res_rsquared_adj)
+		Parallel(n_jobs=n_procs)(delayed(_run_lm)(data_matrix_full,formula,el_idx,df,contrast_images_colname_head,output_vars,res_t,res_p,res_rsquared_adj)
 								for el_idx in range(data_matrix_full.shape[1]))
 
 	res = {}
