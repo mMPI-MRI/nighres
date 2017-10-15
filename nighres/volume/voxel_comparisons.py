@@ -318,9 +318,12 @@ def element_lm(data_matrix_full,descriptives,formula,output_vars,contrast_images
 
 def plot_stats_single_element(data_group,coordinate,contrasts_plotting_idxs=[0,1],mask_file=None,coordinate_in_mm=False,suppress_plotting=False):
 	'''
+
 	'''
+	#TODO: scale to plot ROI averages using mask_id_start_stop
 	data_matrix_full = data_group['data_matrix_full']
-	contrast_names = data_group['contrasts_list']
+	contrast_names = data_group['contrast_names']
+	mask_id_start_stop = data_group['mask_id_start_stop']
 
 	if mask_file is not None:
 		mask_img = load_volume(mask_file)
@@ -389,7 +392,7 @@ def extract_data_group(descriptives,contrast_images_colname_head='contrast_image
 	end_t = time.time()
 	print("Data matrix of shape {1} (contrast, element, subject) extracted in {0:.2f} secs".format((end_t-start_t),data_matrix_full.shape))
 
-	return {'data_matrix_full':data_matrix_full, 'mask_id_start_stop':mask_id_start_stop,'contrasts_list':contrasts_list}
+	return {'data_matrix_full':data_matrix_full, 'mask_id_start_stop':mask_id_start_stop,'contrast_names':df.columns[df.columns.str.startswith(contrast_images_colname_head)].tolist()}
 
 def write_element_results(res,descriptives,output_dir,file_name_head,contrast_images_colname_head='contrast_image_',mask_file=None,fdr_p='bh',alpha=0.05):
 	'''
@@ -444,10 +447,10 @@ def write_element_results(res,descriptives,output_dir,file_name_head,contrast_im
 
 			if fdr_p is not None:
 				import statsmodels.stats.multitest as mt
-				if fdr_p is 'bh_twostage'
+				if fdr_p is 'bh_twostage':
 					rejected, cor_p, m0, alpha_stages = mt.fdrcorrection_twostage(res['pvalues'][var_idx],alpha=alpha,method='bh',is_sorted=False)
 				elif fdr_p is 'bh':
-					rejected, cor_p = mt.fdrcorrection(res['pvalues'][var_idx],alpha=alpha,method='indep',is_sorted=False))
+					rejected, cor_p = mt.fdrcorrection(res['pvalues'][var_idx],alpha=alpha,method='indep',is_sorted=False)
 				#write the volume for corrected pvals
 				out_data[mask] = cor_p
 				out_fname = os.path.join(output_dir,file_name_head + '_' + variable + '_fdr_cor_p.nii.gz')
