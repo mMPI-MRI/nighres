@@ -10,6 +10,17 @@ import nibabel as nb
 from ..io import load_volume, save_volume
 #from ..utils import _output_dir_4saving
 
+
+def _mm2vox(aff,pts):
+    import nibabel as nb
+    import numpy as np
+    #convert xyz coords from mm to voxel space coords
+    return (nb.affines.apply_affine(np.linalg.inv(aff),pts)).astype(int)
+def _vox2mm(aff,pts):
+    import nibabel as nb
+    #convert from voxel coords space back to mm space xyz
+    return nb.affines.apply_affine(aff,pts)
+
 def _volume_to_1d(volume_file, mask=None):
 	'''
 	Converts 3D volume to 1d vector
@@ -30,7 +41,8 @@ def _volume_to_1d(volume_file, mask=None):
 	else:
 		return data.flatten()
 
-def image_pair(contrast_image1, contrast_image2, mask_file=None, return_data_vectors=True, remove_zero_voxels=False):
+def image_pair(contrast_image1, contrast_image2, mask_file=None,
+               return_data_vectors=True, remove_zero_voxels=False):
 	'''
 	Directly compare the voxels of one contrast image to another.
 	Intended to be used for comparing two different contrasts in a
@@ -67,15 +79,9 @@ def image_pair(contrast_image1, contrast_image2, mask_file=None, return_data_vec
 		v1 = v1[~np.isnan(v1)]
 		v2 = v2[~np.isnan(v2)]
 
-	res = {}
-	res['contrast_image1'] = contrast_image1
-	res['contrast_image2'] = contrast_image2
-	res['zeros_removed'] = remove_zero_voxels
-	res["corrcoef"] = np.corrcoef(v1,v2) #compute the correlation coef
-
+	res = {'contrast_image1':contrast_image1, 'contrast_image2':contrast_image2, 'zeros_removed':remove_zero_voxels, 'corrcoef':np.corrcoef(v1,v2)}
 	if return_data_vectors:
 		res["input_vectors"] = np.vstack([v1,v2])
-
 	return res
 
 def extract_data_multi_image(contrast_image_list, mask_file=None, image_thr=None):
@@ -171,30 +177,49 @@ def _run_mixedlm(d,formula,el,dframe,colname_head,output_vars,res_t,res_p,res_rs
 	for output_var_idx, output_var in enumerate(output_vars):
 		res_p[output_var_idx,el] = lmf.pvalues[output_var]
 		res_t[output_var_idx,el] = lmf.tvalues[output_var]
-	#res_rsquared_adj[el] = lmf.rsquared_adj
 
 def element_lm(data_matrix_full,descriptives,formula,output_vars,contrast_images_colname_head='contrast_image_',n_procs=1,tmp_folder=None,**kwargs):
 	'''
-	Element-wise OLS linear model using statsmodels.formula.api.lm . Will correctly treat
+	Element-wise OLS linear model using statsmodels.formula.api.ols . Will correctly treat
 	from 1-3 dimensions if 0th dim is always contrast_images, 1st dim is always elements,
 	2nd always subjects. Works equally well with vectors of data, data from image
 	volumes, and data from vertices.
 	Adding the kwarg groups calls a mixedlm.
 
 	data_matrix_full: np.ndarray
-			Full matrix of data from each subject and contrast provided.
+		Full matrix of data from each subject and contrast provided.
 			0th dim: contrast images
-			1st dim: data elements (voxels)
+			1st dim: data elements (voxels, vertices)
 			2nd dim: subjects (or timepoints, or both)
 	descriptives: csv|pd.DataFrame
 		.csv file or pandas dataframe containing:
 			1) full path(s) to subject contrast images (1 or more)
 			2) additional demographic, group, or control variables for analyses
 	formula: str
-		Written linear model of the form 'Y ~ X + Z'
+		Written linear model of the form 'Y ~ X + Z'. Including
+		groups='groupingVar' in **kwargs runs a mixedlm rather than ols.
 	output_vars: str|list
-		Variables that are of interest for output maps (t/p)
-		Intercept will automatically be included in the output so do not add it here
+		Variables that are of interest for output maps (tvalues/pvalues)
+		Intercept will automatically be included in the output, do not add it.
+	contrast_images_colname_head: str
+		Unique header text that is used in the descriptives file to label the
+		columns containing the full path to the image files. A simple match will
+		be performed to identify all columns that start with this string.
+	n_procs: int {1}
+		Number of processes to use for linear model parallel processing. Uses
+		joblib on local machine
+	tmp_folder: str {None}
+		Full path to existing folder for dumping the memmap files during
+		parallel processing
+	kwargs: **kwargs
+		Additional arguments for passing to the lm / mixed_lm. Passing
+		groups='groupingVar' performs a linear mixed model. See help in
+		statsmodels.formula.api. ols|mixedlm
+
+	Returns: res = {}
+		Dictionary of results from lm | mixedlm including {'pvalues','tvalues',
+		'rsquared_adj','variable_names'}. rsquared_adj filled with 0s for
+		mixedlm, as r2 is undefined.
 	'''
 	import statsmodels.formula.api as smf
 	from sys import stdout as stdout
@@ -291,6 +316,38 @@ def element_lm(data_matrix_full,descriptives,formula,output_vars,contrast_images
 	print("Performed {0} linear models with data from {1} subjects/timepoints in {2:.2f}s.".format(data_matrix_full.shape[1],data_matrix_full.shape[2],end_t-start_t))
 	return res
 
+def plot_stats_single_element(data_group,coordinate,contrasts_plotting_idxs=[0,1],mask_file=None,coordinate_in_mm=False,suppress_plotting=False):
+	'''
+	'''
+	data_matrix_full = data_group['data_matrix_full']
+	contrast_names = data_group['contrasts_list']
+
+	if mask_file is not None:
+		mask_img = load_volume(mask_file)
+		mask_d = mask_img.get_data()
+		aff = mask_img.get_affine()
+		if coordinate_in_mm:
+			coordinate = _mm2vox(aff,coordinate)
+
+		#find where the coordinates are in the flattened volume
+		tmp_idx = np.max(mask_d)+1
+		if mask_d[coordinate] == 0:
+			print('The coordinate that you have chosen is outside of your mask, this only works if you choose a location for which you have data...')
+			return None
+		mask_d[coodinate] = tmp_idx
+		mask_d = mask_d[mask_d>0] #flattened array of masked locations only
+		coordinate_1d = np.where(mask_d==tmp_idx)
+	else: #no mask file, so we assume that the coordinate is an index to the data_matrix_full (0-based)
+		coordinate_1d = coordinate
+	plotting_data = np.squeeze(data_matrix_full[:,coordinate_1d,:])
+	if not suppress_plotting:
+		import matplotlib.pyplot as plt
+		plt.plot(plotting_data[contrasts_plotting_idxs[0],:],plotting_data[contrasts_plotting_idxs[1],:],'o',alpha=0.5)
+		plt.xlabel(contrast_names[contrasts_plotting_idxs[0]])
+		plt.ylabel(contrast_names[contrasts_plotting_idxs[1]])
+		plt.show()
+	return plotting_data
+
 def extract_data_group(descriptives,contrast_images_colname_head='contrast_image_',mask_file=None):
 	'''
 	Extract data from multiple subjects with one or more different contrast
@@ -299,7 +356,7 @@ def extract_data_group(descriptives,contrast_images_colname_head='contrast_image
 
 	descriptives: csv|pd.DataFrame
 		.csv file or pandas dataframe containing:
-			1) full path(s) to subject contrast images (1 or more)
+			1) full path(s) to subject contrast images|files (1 or more)
 			2) additional demographic, group, or control variables for analyses
 	contrast_images_colname_head: str
 		Unique text for name(s) of column(s) where subject contrast images are
@@ -332,7 +389,7 @@ def extract_data_group(descriptives,contrast_images_colname_head='contrast_image
 	end_t = time.time()
 	print("Data matrix of shape {1} (contrast, element, subject) extracted in {0:.2f} secs".format((end_t-start_t),data_matrix_full.shape))
 
-	return data_matrix_full, mask_id_start_stop
+	return {'data_matrix_full':data_matrix_full, 'mask_id_start_stop':mask_id_start_stop,'contrasts_list':contrasts_list}
 
 def write_element_results(res,descriptives,output_dir,file_name_head,contrast_images_colname_head='contrast_image_',mask_file=None,fdr_p='bh',alpha=0.05):
 	'''
@@ -401,7 +458,7 @@ def write_element_results(res,descriptives,output_dir,file_name_head,contrast_im
 
 				#write the volume for thresholded t-vals
 				temp_t = res['tvalues'][var_idx]
-				temp_t[~rejected] = 0 #setto 0 when fail to reject null
+				temp_t[~rejected] = 0 #set to 0 when fail to reject null
 				out_data[mask] = temp_t
 				out_fname = os.path.join(output_dir,file_name_head + '_' + variable + '_fdr_cor_t.nii.gz')
 				head['cal_max'] = out_data.max()
