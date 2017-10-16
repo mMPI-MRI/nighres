@@ -337,7 +337,7 @@ def plot_stats_single_element(data_group,coordinate,contrasts_plotting_idxs=[0,1
 		if mask_d[coordinate] == 0:
 			print('The coordinate that you have chosen is outside of your mask, this only works if you choose a location for which you have data...')
 			return None
-		mask_d[coodinate] = tmp_idx
+		mask_d[coordinate] = tmp_idx
 		mask_d = mask_d[mask_d>0] #flattened array of masked locations only
 		coordinate_1d = np.where(mask_d==tmp_idx)
 	else: #no mask file, so we assume that the coordinate is an index to the data_matrix_full (0-based)
