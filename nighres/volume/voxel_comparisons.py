@@ -10,6 +10,35 @@ import nibabel as nb
 from ..io import load_volume, save_volume
 #from ..utils import _output_dir_4saving
 
+def threshold_image(img,threshold=0,binarise=True,zero_below=True):
+    '''
+    Set image to 0 below or above a threshold. Binarise the output by default.
+
+    img: str|np.ndarray
+        Path to image file or np.ndarray to threshold
+    threshold: int|float
+        Cut-off threshold value
+    binarise: bool
+        Convert all values outside of the threshold to 1
+    zero_below: bool
+        Set values below threshold to 0. If false, set values above threshold
+        to 0
+    returns: np.ndarray
+        Thresholded array
+    '''
+
+    if isinstance(img,basestring):
+		img = load_volume(img)
+		data = mask_img.get_data()
+    if isinstance(img,np.ndimage):
+        data = img
+    if zero_below:
+        data[data<threshold] = 0
+    if not zero_below:
+        data[data>threshold] = 0
+    if binarise:
+        data = data.astype(bool).astype(int)
+    return data
 
 def _mm2vox(aff,pts):
     import nibabel as nb
