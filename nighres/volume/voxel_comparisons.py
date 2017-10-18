@@ -2,6 +2,7 @@ from __future__ import print_function
 import numpy as np
 import pandas as pd
 import nibabel as nb
+import os
 
 #import os
 #import sys
@@ -28,9 +29,9 @@ def threshold_image(img,threshold=0,binarise=True,zero_below=True):
     '''
 
     if isinstance(img,basestring):
-		img = load_volume(img)
-		data = mask_img.get_data()
-    if isinstance(img,np.ndimage):
+        mask_img = load_volume(img)
+        data = mask_img.get_data()
+    if isinstance(img,np.ndarray):
         data = img
     if zero_below:
         data[data<threshold] = 0
@@ -113,7 +114,7 @@ def image_pair(contrast_image1, contrast_image2, mask_file=None,
 		res["input_vectors"] = np.vstack([v1,v2])
 	return res
 
-def extract_data_multi_image(contrast_image_list, mask_file=None, image_thr=None):
+def extract_data_multi_image(contrast_image_list, mask_file=None, image_thresholds=None, zero_below=True,verbose=False):
 	'''
 	Extract data from multiple image volumes and convert to 1d vector(s). If
 	mask_file contains more than one non-zero value, output will be grouped
@@ -125,11 +126,20 @@ def extract_data_multi_image(contrast_image_list, mask_file=None, image_thr=None
 		Multiple indices >0 are valid. Start/stop positions in 2nd dimension
 		of output data_matrix.
 
-	image_thr: int
-		This value is used to construct a mask from the first image in
-		contrast_image_list (anything BELOW this value is set to 0, i.e., masked out)
+	image_thresholds: np.array.astype(int|float)
+		These values are used to construct masks from the images in
+		contrast_image_list. The final mask is the product of all generated
+		masks.
 		ONLY used when mask_file is not provided. Don't be lazy, provide
 		a mask if you can.
+    zero_below: bool
+        If mask_threshold ~= None, zero below the threshold (or above if False)
+
+    Returns: dict
+        data_matrix
+        	['data_matrix_full'] - data matrix for this individual
+        	['contrast_names'] - filenames
+        	['mask_id_start_stop'] - label idx, start, and stop indices in data_matrix_full for non-binary segmentation
 	'''
 	if isinstance(contrast_image_list,basestring):
 		contrast_image_list = [contrast_image_list]
@@ -139,25 +149,33 @@ def extract_data_multi_image(contrast_image_list, mask_file=None, image_thr=None
 		mask_data = mask_img.get_data()
 	else:
 		mask_data = np.ones(load_volume(contrast_image_list[0]).shape)
-		if image_thr is not None:
-			mask_data[load_volume(contrast_image_list[0]).get_data() < image_thr] = 0
+		if image_thresholds is not None:
 
+			#convert to list if single value passed
+			if isinstance(image_thresholds,int) or isinstance(image_thresholds,float):
+				image_thresholds = [image_thresholds]
+			elif len(image_thresholds) == 1:
+ 				image_thresholds = [image_thresholds]
+
+			# create a new mask based on the thresholds that were passed
+			if verbose:
+				print('Generating combined binary image mask based on supplied threshold(s)')
+				print('  Files: \n    {0}'.format(contrast_image_list))
+				print('  Image threshold values: {0}'.format(image_thresholds))
+			for thr_idx,thresh_val in enumerate(image_thresholds):
+				if thr_idx == 0:
+					mask_data = threshold_image(contrast_image_list[thr_idx],threshold=image_thresholds[thr_idx],binarise=True,zero_below=zero_below)
+				else:
+					mask_data = np.multiply(mask_data,threshold_image(contrast_image_list[thr_idx],threshold=image_thresholds[thr_idx],binarise=True,zero_below=zero_below))
 	mask_ids = np.unique(mask_data)
 	mask_ids.sort()
 
-	# pre=allocate an array for data
-	# rows are contrast images, cols are the data from each of the segs
-	# fastest way to do this, but obviously not the most straight forward
-	# to work with later - this is damn fast though
-	# TODO: make easier to use/interpret (lists of arrays?)
-	# # mod: create an empty list of lists and then fill with arrays of known size
-	# # mod: data_matrix_list = [[] for _ in range(np.sum(mask_ids>0))]
-
+	#pre-allocate array and then fill with data as we get it
 	data_matrix = np.zeros((len(contrast_image_list),np.sum(mask_data.flatten()>0)))*np.nan
 	mask_id_start_stop  = np.zeros((np.sum(mask_ids>0),3))*np.nan
 
 	for image_idx, contrast_image in enumerate(contrast_image_list):
-		start = 0
+		start = 0 #to keep track of indices for start and stop of mask_ids when segmentation provided
 
 		for mask_id_idx, mask_id in enumerate(mask_ids[mask_ids > 0]):
 			#print("mask id: {}".format(mask_id))
@@ -175,7 +193,7 @@ def extract_data_multi_image(contrast_image_list, mask_file=None, image_thr=None
 			if image_idx == 0:
 				mask_id_start_stop[mask_id_idx] = np.array([mask_id,start,stop])
 			start = np.copy(stop)
-	return data_matrix, mask_id_start_stop.astype(int)
+	return {'data_matrix_full':data_matrix, 'contrast_names': contrast_image_list, 'mask_id_start_stop':mask_id_start_stop.astype(int)}
 
 def _run_lm(d,formula,el,dframe,colname_head,output_vars,res_t,res_p,res_rsquared_adj):
 	'''
@@ -345,7 +363,7 @@ def element_lm(data_matrix_full,descriptives,formula,output_vars,contrast_images
 	print("Performed {0} linear models with data from {1} subjects/timepoints in {2:.2f}s.".format(data_matrix_full.shape[1],data_matrix_full.shape[2],end_t-start_t))
 	return res
 
-def plot_stats_single_element(data_group,coordinate,contrasts_plotting_idxs=[0,1],mask_file=None,coordinate_in_mm=False,suppress_plotting=False):
+def plot_stats_single_element(data_group,coordinate,contrasts_plotting_idxs=[0,1],mask_file=None,coordinate_in_mm=False,suppress_plotting=False,alpha=0.2):
 	'''
 
 	'''
@@ -371,12 +389,15 @@ def plot_stats_single_element(data_group,coordinate,contrasts_plotting_idxs=[0,1
 		coordinate_1d = np.where(mask_d==tmp_idx)
 	else: #no mask file, so we assume that the coordinate is an index to the data_matrix_full (0-based)
 		coordinate_1d = coordinate
-	plotting_data = np.squeeze(data_matrix_full[:,coordinate_1d,:])
+	if np.ndim(data_matrix_full) == 3: #if we have more than one individual, we only plot the single coordinate's data
+		plotting_data = np.squeeze(data_matrix_full[:,coordinate_1d,:])
+	else: #we were only passed data from a single individual, so plot all coordinates for the two contrasts
+		plotting_data = data_matrix_full
 	if not suppress_plotting:
 		import matplotlib.pyplot as plt
-		plt.plot(plotting_data[contrasts_plotting_idxs[0],:],plotting_data[contrasts_plotting_idxs[1],:],'o',alpha=0.5)
-		plt.xlabel(contrast_names[contrasts_plotting_idxs[0]])
-		plt.ylabel(contrast_names[contrasts_plotting_idxs[1]])
+		plt.plot(plotting_data[contrasts_plotting_idxs[0],:],plotting_data[contrasts_plotting_idxs[1],:],'.',alpha=alpha)
+		plt.xlabel(os.path.basename(contrast_names[contrasts_plotting_idxs[0]]))
+		plt.ylabel(os.path.basename(contrast_names[contrasts_plotting_idxs[1]]))
 		plt.show()
 	return plotting_data
 
@@ -412,12 +433,14 @@ def extract_data_group(descriptives,contrast_images_colname_head='contrast_image
 	contrasts_list = df_contrasts_list.values.tolist()
 
 	for contrasts_idx,contrasts in enumerate(contrasts_list): #TODO: this will fail with only a single individual's data
-		data_matrix, mask_id_start_stop = extract_data_multi_image(contrasts,mask_file=mask_file,image_thr=None) #no image thresh in group data, all data needs to be the same so use a mask
+		res = extract_data_multi_image(contrasts,mask_file=mask_file,image_thresholds=None) #no image thresh in group data, all data needs to be the same so use a mask
+		data_matrix = res['data_matrix_full']
+
 		#if this is the first time through, we use the shape of the data_matrix to set our output size
 		if contrasts_idx == 0:
 			data_matrix_full = np.zeros((data_matrix.shape + (np.shape(contrasts_list)[0],)))
+			mask_id_start_stop = res['mask_id_start_stop']
 		data_matrix_full[:,:,contrasts_idx] = data_matrix
-
 	end_t = time.time()
 	print("Data matrix of shape {1} (contrast, element, subject) extracted in {0:.2f} secs".format((end_t-start_t),data_matrix_full.shape))
 
