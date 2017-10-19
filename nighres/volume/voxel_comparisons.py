@@ -11,6 +11,60 @@ import os
 from ..io import load_volume, save_volume
 #from ..utils import _output_dir_4saving
 
+def generate_group_mask(contrast_images,thresholds=None,contrast_images_colname_head='img_',zero_below=True):
+	'''
+	Generate a binary group mask for the contrast images provided in the dataframe.
+	Thresholds are applied to contrast_images in the same order that they exist
+	in the dataframe. Produces a binary mask where all conditions are met in all
+	input images.
+	'''
+
+	if isinstance(contrast_images,pd.DataFrame):
+		df = contrast_images
+	else:
+		print('Non-dataframe input is not currently supported')
+		return None
+	#elif isinstance(contrast_images,list):
+	#    df = pd.DataFrame(contrast_images,columns=['img_unknown'])
+	#    pass
+
+	df_contrasts_list = df[df.columns[df.columns.str.startswith(contrast_images_colname_head)]]
+	contrasts_list = df_contrasts_list.values.tolist()
+	num_cons = df_contrasts_list.shape[1]
+
+	if len(thresholds) != num_cons:
+		print('You have not supplied enough threshold values {} for the number of contrasts included in your file {}'.format(len(thresholds),num_cons))
+		return None
+
+	for contrasts_idx,contrasts in enumerate(contrasts_list):
+		if contrasts_idx == 0:
+			mask_data = threshold_image_list(contrasts,thresholds=thresholds,zero_below=zero_below,verbose=True)
+		else:
+			mask_data = np.multiply(mask_data,threshold_image_list(contrasts,thresholds=thresholds,zero_below=zero_below,verbose=True))
+	img = load_volume(contrasts[0])
+	head = img.get_header()
+	aff = img.get_affine()
+	img = nb.Nifti1Image(mask_data,aff,header=head)
+	return img
+
+#TODO: make internal
+def threshold_image_list(img_list,thresholds=None,zero_below=True,verbose=True):
+	# create a new mask based on the thresholds that were passed
+	binarise = True
+	if thresholds is None: #if nothing supplied, use 0
+		thresholds = np.zeros(len(img_list))
+	print(thresholds)
+	if verbose:
+		print('Generating combined binary image mask based on supplied threshold(s)')
+		print('  Files: \n    {0}'.format(img_list))
+		print('  Image threshold values: {0}'.format(thresholds))
+	for thr_idx,thresh_val in enumerate(thresholds):
+		if thr_idx == 0:
+			mask_data = threshold_image(img_list[thr_idx],threshold=thresholds[thr_idx],binarise=True,zero_below=zero_below)
+		else:
+			mask_data = np.multiply(mask_data,threshold_image(img_list[thr_idx],threshold=thresholds[thr_idx],binarise=True,zero_below=zero_below))
+	return mask_data
+
 def threshold_image(img,threshold=0,binarise=True,zero_below=True):
     '''
     Set image to 0 below or above a threshold. Binarise the output by default.
@@ -25,7 +79,7 @@ def threshold_image(img,threshold=0,binarise=True,zero_below=True):
         Set values below threshold to 0. If false, set values above threshold
         to 0
     returns: np.ndarray
-        Thresholded array
+        Thresholded array (binary or not)
     '''
 
     if isinstance(img,basestring):
@@ -225,7 +279,7 @@ def _run_mixedlm(d,formula,el,dframe,colname_head,output_vars,res_t,res_p,res_rs
 		res_p[output_var_idx,el] = lmf.pvalues[output_var]
 		res_t[output_var_idx,el] = lmf.tvalues[output_var]
 
-def element_lm(data_matrix_full,descriptives,formula,output_vars,contrast_images_colname_head='contrast_image_',n_procs=1,tmp_folder=None,**kwargs):
+def element_lm(data_matrix_full,descriptives,formula,output_vars,contrast_images_colname_head='img_',n_procs=1,tmp_folder=None,**kwargs):
 	'''
 	Element-wise OLS linear model using statsmodels.formula.api.ols . Will correctly treat
 	from 1-3 dimensions if 0th dim is always contrast_images, 1st dim is always elements,
@@ -263,7 +317,7 @@ def element_lm(data_matrix_full,descriptives,formula,output_vars,contrast_images
 		groups='groupingVar' performs a linear mixed model. See help in
 		statsmodels.formula.api. ols|mixedlm
 
-	Returns: res = {}
+	Returns: dict
 		Dictionary of results from lm | mixedlm including {'pvalues','tvalues',
 		'rsquared_adj','variable_names'}. rsquared_adj filled with 0s for
 		mixedlm, as r2 is undefined.
@@ -401,7 +455,7 @@ def plot_stats_single_element(data_group,coordinate,contrasts_plotting_idxs=[0,1
 		plt.show()
 	return plotting_data
 
-def extract_data_group(descriptives,contrast_images_colname_head='contrast_image_',mask_file=None):
+def extract_data_group(descriptives,contrast_images_colname_head='img_',mask_file=None,fill_na=0):
 	'''
 	Extract data from multiple subjects with one or more different contrast
 	images. Automatically recognises and pulls multiple contrast images if
@@ -415,11 +469,15 @@ def extract_data_group(descriptives,contrast_images_colname_head='contrast_image
 		Unique text for name(s) of column(s) where subject contrast images are
 		listed. e.g. contrast_image_ for: ['contrast_image_FA',contrast_image_T1']
 
-	Returns: data_matrix_full (3d np.ndarray), mask_id_start_stop (2d np.ndarray)
-		Full matrix of data from each subject and contrast provided.
-		0th dim: contrast images
-		1st dim: data elements (voxels)
-		2nd dim: subjects (or timepoints, or both)
+    Returns: dict
+        data_matrix:
+        	['data_matrix_full'] - data matrix for this individual
+        	['contrast_names'] - filenames
+        	['mask_id_start_stop'] - label idx, start, and stop indices in data_matrix_full for non-binary segmentation
+        ['data_matrix_full']:
+    		0th dim: contrast images
+    		1st dim: data elements (voxels)
+    		2nd dim: subjects (or timepoints, or both)
 	'''
 	import time
 	start_t = time.time()
@@ -443,10 +501,11 @@ def extract_data_group(descriptives,contrast_images_colname_head='contrast_image
 		data_matrix_full[:,:,contrasts_idx] = data_matrix
 	end_t = time.time()
 	print("Data matrix of shape {1} (contrast, element, subject) extracted in {0:.2f} secs".format((end_t-start_t),data_matrix_full.shape))
-
+	if fill_na is not None:
+		data_matrix_full[np.isnan(data_matrix_full)] = fill_na
 	return {'data_matrix_full':data_matrix_full, 'mask_id_start_stop':mask_id_start_stop,'contrast_names':df.columns[df.columns.str.startswith(contrast_images_colname_head)].tolist()}
 
-def write_element_results(res,descriptives,output_dir,file_name_head,contrast_images_colname_head='contrast_image_',mask_file=None,fdr_p='bh',alpha=0.05):
+def write_element_results(res,descriptives,output_dir,file_name_head,contrast_images_colname_head='img_',mask_file=None,fdr_p='bh',alpha=0.05):
 	'''
 	Write statistical results (pvals,tvals,rsquared_adj) back to the type of file
 	from which they were generated.
