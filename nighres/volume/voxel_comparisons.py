@@ -35,13 +35,13 @@ def generate_group_mask(contrast_images, thresholds=None, contrast_images_colnam
     contrasts_list = df_contrasts_list.values.tolist()
     num_cons = df_contrasts_list.shape[1]
     contrast_names = df.columns[df.columns.str.startswith(contrast_images_colname_head)].values
-    print(contrast_names)
     if len(thresholds) != num_cons:
         print(
             'You have not supplied enough threshold values {} for the number of contrasts included in your file {}'.format(
                 len(thresholds), num_cons))
         return None
 
+    print('Using contrasts: {} and their matched thresholds: {}'.format(contrast_names,thresholds))
     subject_count = 1
     images_dict = {}
 
@@ -369,7 +369,7 @@ def extract_data_multi_image(contrast_image_list, mask_file=None, image_threshol
             'mask_id_start_stop': mask_id_start_stop.astype(int)}
 
 
-def _run_lm(d, formula, el, dframe, colname_head, output_vars, res_t, res_p, res_rsquared_adj):
+def _run_lm(d, formula, el, dframe, colname_head, output_vars, res_t, res_p, res_rsquared_adj, res_f_p):
     '''
     For parallelisation of statsmodels call to statsmodels.formula.api.ols .
     Requires memmapped input/output data.
@@ -384,10 +384,10 @@ def _run_lm(d, formula, el, dframe, colname_head, output_vars, res_t, res_p, res
         res_p[output_var_idx, el] = lmf.pvalues[output_var]
         res_t[output_var_idx, el] = lmf.tvalues[output_var]
     res_rsquared_adj[el] = lmf.rsquared_adj
-
+    res_f_p[el] = lmf.f_pvalue
 
 # INITIAL TRY: NOT TESTED
-def _run_mixedlm(d, formula, el, dframe, colname_head, output_vars, res_t, res_p, res_rsquared_adj, **kwargs):
+def _run_mixedlm(d, formula, el, dframe, colname_head, output_vars, res_t, res_p, res_rsquared_adj, res_f_p, **kwargs):
     '''
     For parallelisation of statsmodels call to statsmodels.formula.api.ols .
     Requires memmapped input/output data.
@@ -480,6 +480,7 @@ def element_lm(data_matrix_full, descriptives, formula, output_vars, contrast_im
     res_p = np.zeros((len(output_vars), data_matrix_full.shape[1])) * np.nan  # each output var gets its own row
     res_t = np.copy(res_p) * np.nan
     res_rsquared_adj = np.zeros((data_matrix_full.shape[1])) * np.nan  # single row of R2, only one per model
+    res_f_p = np.zeros_like(res_rsquared_adj) * np.nan
     # print(res_p.shape)
 
     # this is likely quite slow, since we run linear models separatenly for each element :-/
@@ -510,10 +511,14 @@ def element_lm(data_matrix_full, descriptives, formula, output_vars, contrast_im
             res_t_name = os.path.join(tmp_folder, 'res_t')
             res_p_name = os.path.join(tmp_folder, 'res_p')
             res_rsq_name = os.path.join(tmp_folder, 'res_rsq')
+            res_f_p_name = os.path.join(tmp_folder, 'res_f_p')
+
             res_t = np.memmap(res_t_name, dtype=res_t.dtype, shape=res_t.shape, mode='w+')
             res_p = np.memmap(res_p_name, dtype=res_p.dtype, shape=res_p.shape, mode='w+')
             res_rsquared_adj = np.memmap(res_rsq_name, dtype=res_rsquared_adj.dtype, shape=res_rsquared_adj.shape,
                                          mode='w+')
+            res_f_p = np.memmap(res_f_p_name, dtype=res_rsquared_adj.dtype, shape=res_rsquared_adj.shape,
+                                mode='w+')
             dump(data_matrix_full, os.path.join(tmp_folder, 'data_matrix_full'))
             data_matrix_full = load(os.path.join(tmp_folder, 'data_matrix_full'), mmap_mode='r')
             dump(df, os.path.join(tmp_folder, 'descriptives_df'))
@@ -525,18 +530,19 @@ def element_lm(data_matrix_full, descriptives, formula, output_vars, contrast_im
         if not mixed_model:
             Parallel(n_jobs=n_procs)(
                 delayed(_run_lm)(data_matrix_full, formula, el_idx, df, contrast_images_colname_head, output_vars,
-                                 res_t, res_p, res_rsquared_adj)
+                                 res_t, res_p, res_rsquared_adj, res_f_p)
                 for el_idx in range(data_matrix_full.shape[1]))
         else:
             Parallel(n_jobs=n_procs)(
                 delayed(_run_lm)(data_matrix_full, formula, el_idx, df, contrast_images_colname_head, output_vars,
-                                 res_t, res_p, res_rsquared_adj, **kwargs)
+                                 res_t, res_p, res_rsquared_adj, res_f_p, **kwargs)
                 for el_idx in range(data_matrix_full.shape[1]))
 
     res = {}
     res['tvalues'] = np.copy(res_t)
     res['pvalues'] = np.copy(res_p)
     res['rsquared_adj'] = np.copy(res_rsquared_adj)
+    res['model_f_pvalues'] = np.copy(res_f_p)
     res['variable_names'] = output_vars
 
     # cleanup our mess
@@ -655,6 +661,8 @@ def write_element_results(res, descriptives, output_dir, file_name_head, contras
     from which they were generated.
     '''
     import os
+    if fdr_p is not None:
+        import statsmodels.stats.multitest as mt
 
     if isinstance(descriptives, basestring):  # should be a csv file, load it
         df = pd.read_csv(descriptives, header=0)
@@ -701,7 +709,6 @@ def write_element_results(res, descriptives, output_dir, file_name_head, contras
             # print(out_fname)
 
             if fdr_p is not None:
-                import statsmodels.stats.multitest as mt
                 if fdr_p is 'bh_twostage':
                     rejected, cor_p, m0, alpha_stages = mt.fdrcorrection_twostage(res['pvalues'][var_idx], alpha=alpha,
                                                                                   method='bh', is_sorted=False)
