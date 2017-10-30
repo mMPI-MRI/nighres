@@ -12,7 +12,6 @@ from ..io import load_volume, save_volume
 
 
 # from ..utils import _output_dir_4saving
-
 def generate_group_mask(contrast_images, thresholds=None, contrast_images_colname_head='img_',
                         zero_below=True, apply_threshold_to_individual_images = True, verbose = False):
     '''
@@ -178,6 +177,74 @@ def _volume_to_1d(volume_file, mask=None):
             return data[mask_bool]
     else:
         return data.flatten()
+
+def element_corrcoef(data_matrix, contrast_idxs=None, contrast1=None, contrast2=None, pvalues=True):
+    '''
+    Calculate the correlation between two (TODO: or more) contrasts provided in data_matrix format
+    :param data_matrix: dict
+        dictionary with :
+            'data_matrix_full'  - full data matrix of shape contrast by element by subject
+            'contrast_names'    - names of image contrasts
+            ...                 - others not used
+    :param contrast_idxs: list of int
+        0-based index of location within the data_matrix['data_matrix_full'] (dimension 0) of the 1st and 2nd contrast.
+        If provided, this is used and contrast1/contrast2 are ignored
+    :param contrast1: str
+        Name of the contrast in the data matrix for the first contrast
+    :param contrast2: str
+        Name of the contrast in the data matrix for the second contrast
+    pvalues: bool
+        Output results with pvalues as well as rvalues.
+        If True, uses scipy.stats.pearsonr
+        If False, numpy.corrcoef is used
+    :return:
+        res: dict
+            Dictionary of results containing 'rvalues' and 'contrast_names' for each element in the
+            data_matrix['data_matrix_full'].
+            If pvalues=True, also returns 'pvalues' within the dictionary, and field 'calculation' to record what was
+            done to obtain the results
+    '''
+    import time
+    start_t = time.time()
+
+    #TODO: make generalizable to all indices
+    data_matrix_full = data_matrix['data_matrix_full']
+    contrast_names = data_matrix['contrast_names']
+
+    res = {'contrast_names': contrast_names}
+
+    #base on names if indices not passed
+    if contrast_idxs is None:
+        contrast_idxs[0] = contrast_names.index(contrast1)
+        contrast_idxs[1] = contrast_names.index(contrast2)
+
+    res_r = np.zeros(data_matrix_full.shape[1])*np.nan
+    xvar = data_matrix_full[contrast_idxs[0],:,:]
+    yvar = data_matrix_full[contrast_idxs[1],:,:]
+
+    if not pvalues:
+        for el_idx in range(0,data_matrix_full.shape[1]):
+            res_r[el_idx] = np.corrcoef(xvar[el_idx,:],yvar[el_idx,:])[0,1]
+        res['rvalues'] = res_r
+        res['calculation'] = 'numpy.corrcoef(contrast1,contrast2)'
+
+    else:
+        from scipy.stats import pearsonr as pr
+        res_p = np.copy(res_r)
+        for el_idx in range(0, xvar.shape[0]):
+            try:
+                res_r[el_idx], res_p[el_idx] = pr(xvar[el_idx,:],yvar[el_idx,:])
+            except:
+                print(el_idx)
+                return res_r, res_p, xvar, yvar
+        res['rvalues'] = res_r
+        res['pvalues'] = res_p
+        res['calculation'] = 'scipy.stats.pearsonr(contrast1,contrast2)'
+    end_t = time.time()
+    print("Performed {0} correlations with data from {1} subjects/timepoints in {2:.2f}s.".format(
+        data_matrix_full.shape[1], data_matrix_full.shape[2], end_t - start_t))
+    return res
+
 
 def basic_element_lm(data_matrix,criterion,predictors_list,descriptives=None,contrast_images_colname_head='img_',add_intercept=True):
     '''
@@ -387,6 +454,7 @@ def _run_lm(d, formula, el, dframe, colname_head, output_vars, res_t, res_p, res
     res_f_p[el] = lmf.f_pvalue
 
 # INITIAL TRY: NOT TESTED
+# TODO: finish and test, this is more useful than the standard lm since the standard one can be done with many tools...
 def _run_mixedlm(d, formula, el, dframe, colname_head, output_vars, res_t, res_p, res_rsquared_adj, res_f_p, **kwargs):
     '''
     For parallelisation of statsmodels call to statsmodels.formula.api.ols .
@@ -403,8 +471,8 @@ def _run_mixedlm(d, formula, el, dframe, colname_head, output_vars, res_t, res_p
         res_t[output_var_idx, el] = lmf.tvalues[output_var]
 
 
-def element_lm(data_matrix_full, descriptives, formula, output_vars, contrast_images_colname_head='img_', n_procs=1,
-               tmp_folder=None, **kwargs):
+def element_lm(data_matrix_full, formula, output_vars, descriptives=None, contrast_images_colname_head='img_',
+               demean_data = False, n_procs=1, tmp_folder=None, **kwargs):
     '''
     Element-wise OLS linear model using statsmodels.formula.api.ols . Will correctly treat
     from 1-3 dimensions if 0th dim is always contrast_images, 1st dim is always elements,
@@ -431,6 +499,8 @@ def element_lm(data_matrix_full, descriptives, formula, output_vars, contrast_im
         Unique header text that is used in the descriptives file to label the
         columns containing the full path to the image files. A simple match will
         be performed to identify all columns that start with this string.
+    demean_data: bool
+        0-center the data from each individual and contrast. This does not alter the mean of other data in the dataframes
     n_procs: int {1}
         Number of processes to use for linear model parallel processing. Uses
         joblib on local machine
@@ -448,7 +518,7 @@ def element_lm(data_matrix_full, descriptives, formula, output_vars, contrast_im
         mixedlm, as r2 is undefined.
     '''
     import statsmodels.formula.api as smf
-    from sys import stdout as stdout
+    #from sys import stdout as stdout
     import shutil
     import os
     import time
@@ -468,6 +538,10 @@ def element_lm(data_matrix_full, descriptives, formula, output_vars, contrast_im
         data_matrix_full = data_matrix_full[:, :,
                            np.newaxis]  # this may not work for all cases, depending on the assumptions made
 
+    #remove the mean of each subject's data from each contrast
+    if demean_data:
+        data_matrix_full = data_matrix_full - np.mean(data_matrix_full,axis=1)[:,np.newaxis,:]
+
     if isinstance(output_vars, basestring):
         output_vars = [output_vars]
     output_vars.append('Intercept')  # add the intercept for output too
@@ -481,7 +555,6 @@ def element_lm(data_matrix_full, descriptives, formula, output_vars, contrast_im
     res_t = np.copy(res_p) * np.nan
     res_rsquared_adj = np.zeros((data_matrix_full.shape[1])) * np.nan  # single row of R2, only one per model
     res_f_p = np.zeros_like(res_rsquared_adj) * np.nan
-    # print(res_p.shape)
 
     # this is likely quite slow, since we run linear models separatenly for each element :-/
     if n_procs == 1:
@@ -544,6 +617,7 @@ def element_lm(data_matrix_full, descriptives, formula, output_vars, contrast_im
     res['rsquared_adj'] = np.copy(res_rsquared_adj)
     res['model_f_pvalues'] = np.copy(res_f_p)
     res['variable_names'] = output_vars
+    res['descriptives'] = descriptives
 
     # cleanup our mess
     if n_procs is not 1:
@@ -554,18 +628,36 @@ def element_lm(data_matrix_full, descriptives, formula, output_vars, contrast_im
     end_t = time.time()
     print("Performed {0} linear models with data from {1} subjects/timepoints in {2:.2f}s.".format(
         data_matrix_full.shape[1], data_matrix_full.shape[2], end_t - start_t))
+
     return res
 
 
-def plot_stats_single_element(data_group, coordinate, contrasts_plotting_idxs=[0, 1], mask_file=None,
-                              coordinate_in_mm=False, suppress_plotting=False, alpha=0.2):
+
+def plot_stats_single_element(data_group, coordinate, contrasts_plotting_idxs=[0, 1], descriptives_col=None,
+                              mask_file=None, coordinate_in_mm=False, suppress_plotting=False, alpha=0.2):
     '''
 
+    #final var in descriptives col is used as Y variable, others as covariates
     '''
     # TODO: scale to plot ROI averages using mask_id_start_stop
     data_matrix_full = data_group['data_matrix_full']
     contrast_names = data_group['contrast_names']
     mask_id_start_stop = data_group['mask_id_start_stop']
+    if descriptives_col: #colname(s) selected
+        if 'descriptives' in data_group:
+            descriptives = data_group['descriptives']
+        else:
+            print('The data dictionary that you passed does not include descriptives (i.e., a DataFrame')
+        Yvar = descriptives[descriptives_col.pop()]
+        plots_count = len(contrasts_plotting_idxs)
+        if descriptives_col: #if we still have descriptives, we use them as covariates
+            Covars = descriptives[descriptives_col]
+        else:
+            Covars = None
+    else:
+        plots_count = len(contrasts_plotting_idxs)
+        Yvar = None
+    #TODO: remove the covariates and plot the residuals
 
     if mask_file is not None:
         mask_img = load_volume(mask_file)
@@ -591,12 +683,23 @@ def plot_stats_single_element(data_group, coordinate, contrasts_plotting_idxs=[0
         plotting_data = data_matrix_full
     if not suppress_plotting:
         import matplotlib.pyplot as plt
-        plt.plot(plotting_data[contrasts_plotting_idxs[0], :], plotting_data[contrasts_plotting_idxs[1], :], '.',
-                 alpha=alpha)
-        plt.xlabel(os.path.basename(contrast_names[contrasts_plotting_idxs[0]]))
-        plt.ylabel(os.path.basename(contrast_names[contrasts_plotting_idxs[1]]))
-        plt.show()
-    return plotting_data
+        if Yvar is not None:  # if we already defined the Yvariable with the descriptives, then we plot it versus all of the contrast types
+            ydata = Yvar
+            #TODO: add for loop here using itertools.permutation (and removing duplicates)
+            ylabel = Yvar.name
+            xdata = plotting_data[contrasts_plotting_idxs[0]]
+            xlabel = os.path.basename(contrast_names[contrasts_plotting_idxs[0]])
+        else: # or we set the y to be the next plotting index (plotting all against 1st)
+            xdata = plotting_data[contrasts_plotting_idxs[0],:]
+            ydata = plotting_data[contrasts_plotting_idxs[1],:]
+            xlabel = os.path.basename(contrast_names[contrasts_plotting_idxs[0]])
+            ylabel = os.path.basename(contrast_names[contrasts_plotting_idxs[1]])
+        f,ax = plt.subplots(figsize=(10,10))
+        ax.plot(xdata, ydata, '.', alpha=alpha)
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
+        f.show()
+    return f,ax
 
 
 def extract_data_group(descriptives, contrast_images_colname_head='img_', mask_file=None, fill_na=0):
@@ -618,6 +721,7 @@ def extract_data_group(descriptives, contrast_images_colname_head='img_', mask_f
             ['data_matrix_full'] - data matrix for this individual
             ['contrast_names'] - filenames
             ['mask_id_start_stop'] - label idx, start, and stop indices in data_matrix_full for non-binary segmentation
+            ['descriptives'] - included dataframe
         ['data_matrix_full']:
             0th dim: contrast images
             1st dim: data elements (voxels)
@@ -651,7 +755,8 @@ def extract_data_group(descriptives, contrast_images_colname_head='img_', mask_f
     if fill_na is not None:
         data_matrix_full[np.isnan(data_matrix_full)] = fill_na
     return {'data_matrix_full': data_matrix_full, 'mask_id_start_stop': mask_id_start_stop,
-            'contrast_names': df.columns[df.columns.str.startswith(contrast_images_colname_head)].tolist()}
+            'contrast_names': df.columns[df.columns.str.startswith(contrast_images_colname_head)].tolist(),
+            'descriptives': descriptives}
 
 
 def write_element_results(res, descriptives, output_dir, file_name_head, contrast_images_colname_head='img_',
@@ -717,7 +822,7 @@ def write_element_results(res, descriptives, output_dir, file_name_head, contras
                                                        is_sorted=False)
                 # write the volume for corrected pvals
                 out_data[mask] = cor_p
-                out_fname = os.path.join(output_dir, file_name_head + '_' + variable + '_fdr_cor_p.nii.gz')
+                out_fname = os.path.join(output_dir, file_name_head + '_' + variable + '_p_fdr_cor.nii.gz')
                 head['cal_max'] = out_data.max()
                 head['cal_min'] = out_data.min()
                 img = nb.Nifti1Image(out_data, aff, header=head)
@@ -727,7 +832,7 @@ def write_element_results(res, descriptives, output_dir, file_name_head, contras
                 temp_t = res['tvalues'][var_idx]
                 temp_t[~rejected] = 0  # set to 0 when fail to reject null
                 out_data[mask] = temp_t
-                out_fname = os.path.join(output_dir, file_name_head + '_' + variable + '_fdr_cor_t.nii.gz')
+                out_fname = os.path.join(output_dir, file_name_head + '_' + variable + '_t_fdr_cor.nii.gz')
                 head['cal_max'] = out_data.max()
                 head['cal_min'] = out_data.min()
                 img = nb.Nifti1Image(out_data, aff, header=head)
@@ -740,7 +845,50 @@ def write_element_results(res, descriptives, output_dir, file_name_head, contras
         head['cal_min'] = out_data.min()
         img = nb.Nifti1Image(out_data, aff, header=head)
         save_volume(out_fname, img)
-    # print(out_fname)
+
+        # write the model_f_pvalues volume
+        out_data[mask] = res['model_f_pvalues']
+        out_fname = os.path.join(output_dir, file_name_head + '_' + 'model' + '_f_p.nii.gz')
+        head['cal_max'] = out_data.max()
+        head['cal_min'] = out_data.min()
+        img = nb.Nifti1Image(out_data, aff, header=head)
+        save_volume(out_fname, img)
+
+        if fdr_p is not None:
+            if fdr_p is 'bh_twostage':
+                f_rejected, f_cor_p, f_m0, f_alpha_stages = mt.fdrcorrection_twostage(res['model_f_pvalues'],
+                                                                                      alpha=alpha,method='bh',
+                                                                                      is_sorted=False)
+            elif fdr_p is 'bh':
+                f_rejected, f_cor_p = mt.fdrcorrection(res['model_f_pvalues'], alpha=alpha, method='indep',
+                                                       is_sorted=False)
+#            print(sum(~f_rejected))
+#            print(sum(f_cor_p<0.05))
+            # write the volume for corrected model f pvals
+            out_data[mask] = f_cor_p
+            out_fname = os.path.join(output_dir, file_name_head + '_' + variable + '_model_f_p_fdr_cor.nii.gz')
+            head['cal_max'] = out_data.max()
+            head['cal_min'] = out_data.min()
+            img = nb.Nifti1Image(out_data, aff, header=head)
+            save_volume(out_fname, img)
+
+            #output the 1-p value for easy display (corrected)
+            out_data[mask] = 1 - out_data[mask]
+            out_fname = os.path.join(output_dir, file_name_head + '_' + 'model' + '_f_1mp_fdr_cor.nii.gz')
+            head['cal_max'] = out_data.max()
+            head['cal_min'] = out_data.min()
+            img = nb.Nifti1Image(out_data, aff, header=head)
+            save_volume(out_fname, img)
+
+            # write the volume for thresholded rsqr_adj values
+            temp_t = res['rsquared_adj']
+            temp_t[~f_rejected] = 0  # set to 0 when fail to reject null
+            out_data[mask] = temp_t
+            out_fname = os.path.join(output_dir, file_name_head + '_' + variable + '_r2adj_fdr_cor.nii.gz')
+            head['cal_max'] = out_data.max()
+            head['cal_min'] = out_data.min()
+            img = nb.Nifti1Image(out_data, aff, header=head)
+            save_volume(out_fname, img)
 
     elif ext is 'txt':  # working with vertex files
         pass
