@@ -64,7 +64,6 @@ def generate_group_mask(contrast_images, thresholds=None, contrast_images_colnam
         else: #or else we need to create a mean image and then threshold it
             if contrasts_idx == 0: #we need to create the matrix that we will work on by filling it with the first image, for each contrast
                 contrast_num = 1
-                print(contrasts)
                 for contrast in contrasts:
                     if verbosity > 1:
                         print("  Input file: {}".format(contrast))
