@@ -106,8 +106,17 @@ def generate_group_mask(contrast_images, thresholds=None, contrast_images_colnam
                 mask_data = images_dict[key]
             else:
                 mask_data = np.multiply(mask_data,images_dict[key])
+
+            head['cal_min'] = np.min(images_dict[key])
+            head['cal_max'] = np.max(images_dict[key])
             images_dict[key] = nb.Nifti1Image(images_dict[key],aff,header=head)
+
+            head['cal_min'] = np.min(mean_dict[key])
+            head['cal_max'] = np.max(mean_dict[key])
             mean_dict[key] = nb.Nifti1Image(mean_dict[key],aff,header=head)
+
+            head['cal_min'] = np.min(mask_data)
+            head['cal_max'] = np.max(mask_data)
         return {'combined_mask':nb.Nifti1Image(mask_data,aff,header=head),'individual_contrast_masks':images_dict, 'individual_contrast_means':mean_dict}
 
 
