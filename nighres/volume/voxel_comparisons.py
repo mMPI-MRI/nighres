@@ -13,13 +13,17 @@ from ..io import load_volume, save_volume
 
 # from ..utils import _output_dir_4saving
 def generate_group_mask(contrast_images, thresholds=None, contrast_images_colname_head='img_',
-                        zero_below=True, apply_threshold_to_individual_images = True, verbose = False):
+                        zero_below=True, apply_threshold_to_individual_images = True, verbosity = 0):
     '''
     Generate a binary group mask for the contrast images provided in the dataframe.
     Thresholds are applied to contrast_images in the same order that they exist
     in the dataframe. Produces a binary mask where all conditions are met in all
     input images.
     '''
+    if verbosity > 0:
+        verbose = True
+    else:
+        verbose = False
 
     if isinstance(contrast_images, pd.DataFrame):
         df = contrast_images
@@ -30,13 +34,18 @@ def generate_group_mask(contrast_images, thresholds=None, contrast_images_colnam
     #    df = pd.DataFrame(contrast_images,columns=['img_unknown'])
     #    pass
 
+    # extract the columns with the filenames for each contrast
     df_contrasts_list = df[df.columns[df.columns.str.startswith(contrast_images_colname_head)]]
+    print(df_contrasts_list.columns)
     contrasts_list = df_contrasts_list.values.tolist()
     num_cons = df_contrasts_list.shape[1]
+    # keep track of the columns that contain the contrast files
     contrast_names = df.columns[df.columns.str.startswith(contrast_images_colname_head)].values
+    thresholds_dict = dict(zip(contrast_names, thresholds))
+    print(contrast_names)
     if len(thresholds) != num_cons:
         print(
-            'You have not supplied enough threshold values {} for the number of contrasts included in your file {}'.format(
+            'You have not supplied the correct number of threshold values {} for the number of contrasts included in your dataframe {}'.format(
                 len(thresholds), num_cons))
         return None
 
@@ -47,42 +56,51 @@ def generate_group_mask(contrast_images, thresholds=None, contrast_images_colnam
     for contrasts_idx, contrasts in enumerate(contrasts_list):
         if apply_threshold_to_individual_images:
             if contrasts_idx == 0:
-                mask_data = threshold_image_list(contrasts, thresholds=thresholds, zero_below=zero_below, verbose=verbose)
+                mask_data = threshold_image_list(contrasts, thresholds=thresholds, zero_below=zero_below, verbose=verbose) #TODO: check if this is treating the thresholds correctly
             else:
                 mask_data = np.multiply(mask_data,
                                         threshold_image_list(contrasts, thresholds=thresholds, zero_below=zero_below,
                                                              verbose=verbose))
         else: #or else we need to create a mean image and then threshold it
-            if contrasts_idx == 0:
+            if contrasts_idx == 0: #we need to create the matrix that we will work on by filling it with the first image, for each contrast
                 contrast_num = 1
+                print(contrasts)
                 for contrast in contrasts:
+                    if verbosity > 1:
+                        print("  Input file: {}".format(contrast))
                     images_dict[contrast_names[contrast_num-1]] = load_volume(contrast).get_data() # -1 to go to 0-indexing
                     contrast_num += 1
             else: #we already loaded one and created the dict, so we just add to them
                 contrast_num = 1
                 for contrast in contrasts:
+                    if verbosity > 1:
+                        print("  Input file: {}".format(contrast))
                     images_dict[contrast_names[contrast_num-1]] = np.add(images_dict[contrast_names[contrast_num-1]],load_volume(contrast).get_data())
                     contrast_num += 1
         subject_count += 1
     if not apply_threshold_to_individual_images:
+        if verbosity > 0:
+            print("Applying threshold to mean image")
         mean_dict = {}
-        for key_idx, key in enumerate(images_dict): #create the mean images
-            mean_dict[key] = images_dict[key] / subject_count
+        for key in images_dict: #create the mean images (one for each contrast)
+            print("  {} thresholded at {}".format(key,thresholds_dict[key]))
+            mean_dict[key] = images_dict[key].astype(np.float) / float(subject_count)
 
             if zero_below:
-                images_dict[key][mean_dict[key]<thresholds[key_idx]] = 0
+                images_dict[key][mean_dict[key]<thresholds_dict[key]] = 0
             else:
-                images_dict[key][mean_dict[key]>thresholds[key_idx]] = 0
+                images_dict[key][mean_dict[key]>thresholds_dict[key]] = 0
             images_dict[key] = images_dict[key].astype(bool).astype(int)
 
     img = load_volume(contrasts[0])
     head = img.get_header()
     aff = img.get_affine()
 
+    #set the ouptut
     if apply_threshold_to_individual_images:
         img = nb.Nifti1Image(mask_data, aff, header=head)
         return img
-    else:
+    else: #make a dictionary for all of the interesting outputs
         for key_idx,key in enumerate(images_dict):
             if key_idx == 0:
                 mask_data = images_dict[key]
@@ -207,7 +225,7 @@ def element_corrcoef(data_matrix, contrast_idxs=None, contrast1=None, contrast2=
     import time
     start_t = time.time()
 
-    #TODO: make generalizable to all indices
+    #TODO: make generalizable to all indices - looping!
     data_matrix_full = data_matrix['data_matrix_full']
     contrast_names = data_matrix['contrast_names']
 
