@@ -36,13 +36,13 @@ def generate_group_mask(contrast_images, thresholds=None, contrast_images_colnam
 
     # extract the columns with the filenames for each contrast
     df_contrasts_list = df[df.columns[df.columns.str.startswith(contrast_images_colname_head)]]
-    print(df_contrasts_list.columns)
     contrasts_list = df_contrasts_list.values.tolist()
     num_cons = df_contrasts_list.shape[1]
+
     # keep track of the columns that contain the contrast files
     contrast_names = df.columns[df.columns.str.startswith(contrast_images_colname_head)].values
-    thresholds_dict = dict(zip(contrast_names, thresholds))
-    print(contrast_names)
+    thresholds_dict = dict(zip(contrast_names, thresholds)) #necessary for correct lookup of thresholds, dict is sorted
+
     if len(thresholds) != num_cons:
         print(
             'You have not supplied the correct number of threshold values {} for the number of contrasts included in your dataframe {}'.format(
@@ -56,7 +56,7 @@ def generate_group_mask(contrast_images, thresholds=None, contrast_images_colnam
     for contrasts_idx, contrasts in enumerate(contrasts_list):
         if apply_threshold_to_individual_images:
             if contrasts_idx == 0:
-                mask_data = threshold_image_list(contrasts, thresholds=thresholds, zero_below=zero_below, verbose=verbose) #TODO: check if this is treating the thresholds correctly
+                mask_data = threshold_image_list(contrasts, thresholds=thresholds, zero_below=zero_below, verbose=verbose)
             else:
                 mask_data = np.multiply(mask_data,
                                         threshold_image_list(contrasts, thresholds=thresholds, zero_below=zero_below,
@@ -75,7 +75,8 @@ def generate_group_mask(contrast_images, thresholds=None, contrast_images_colnam
                 for contrast in contrasts:
                     if verbosity > 1:
                         print("  Input file: {}".format(contrast))
-                    images_dict[contrast_names[contrast_num-1]] = np.add(images_dict[contrast_names[contrast_num-1]],load_volume(contrast).get_data())
+                    images_dict[contrast_names[contrast_num-1]] = np.add(images_dict[contrast_names[contrast_num-1]],
+                                                                         load_volume(contrast).get_data())
                     contrast_num += 1
         subject_count += 1
     if not apply_threshold_to_individual_images:
