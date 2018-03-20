@@ -19,6 +19,7 @@ def generate_group_mask(contrast_images, thresholds=None, contrast_images_colnam
     Thresholds are applied to contrast_images in the same order that they exist
     in the dataframe. Produces a binary mask where all conditions are met in all
     input images.
+    NOTE: thresholds MUST be in the same order as the column names of the contrast images
     '''
     if verbosity > 0:
         verbose = True
@@ -49,7 +50,7 @@ def generate_group_mask(contrast_images, thresholds=None, contrast_images_colnam
                 len(thresholds), num_cons))
         return None
 
-    print('Using contrasts: {} and their matched thresholds: {}'.format(contrast_names,thresholds))
+    print('Using contrasts: {} and their respective thresholds: {}'.format(contrast_names,thresholds))
     subject_count = 1
     images_dict = {}
 
@@ -119,6 +120,51 @@ def generate_group_mask(contrast_images, thresholds=None, contrast_images_colnam
             head['cal_max'] = np.max(mask_data)
         return {'combined_mask':nb.Nifti1Image(mask_data,aff,header=head),'individual_contrast_masks':images_dict, 'individual_contrast_means':mean_dict}
 
+def generate_group_4d_images(contrast_images, contrast_images_colname_head="img_", verbosity=1, dtype="float16"):
+    """
+    Generate 4d file from contrast images listed in a dataframe (contrast_images) with the heading provided by
+    contrast_images_colname_head.
+
+    :param contrast_images:
+    :param contrast_images_colname_head:
+    :param verbosity:
+    :return:
+    """
+    if isinstance(contrast_images, pd.DataFrame):
+        df = contrast_images
+    else:
+        print('Non-dataframe input is not currently supported')
+        return None
+    # elif isinstance(contrast_images,list):
+    #    df = pd.DataFrame(contrast_images,columns=['img_unknown'])
+    #    pass
+
+    # keep track of the columns that contain the contrast files
+    contrast_names = df.columns[df.columns.str.startswith(contrast_images_colname_head)].values
+
+    images_dict = {}
+
+    # TODO: create file on disk rather than in mem?
+    for contrast in contrast_names:
+        print("Creating 4d image for {}".format(contrast))
+        row_idx = 0
+        for index, row in df.iterrows():
+            if verbosity > 1:
+                print(row_idx),
+            if row_idx == 0:
+                img = load_volume(row[contrast])
+                head = img.header
+                aff = img.affine
+                images_dict[contrast] = np.empty(img.shape + tuple([df.shape[0]]))
+            images_dict[contrast][..., row_idx] = load_volume(row[contrast]).get_data()
+            row_idx += 1
+        if verbosity > 1:
+            print("")
+        # convert to an nbimage
+        head['cal_min'] = np.min(images_dict[contrast])
+        head['cal_max'] = np.max(images_dict[contrast])
+        images_dict[contrast] = nb.Nifti1Image(images_dict[contrast].astype(dtype), aff, header=head) #TODO: change type
+    return images_dict
 
 # TODO: make internal
 def threshold_image_list(img_list, thresholds=None, zero_below=True, verbose=True):
