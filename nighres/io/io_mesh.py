@@ -283,7 +283,7 @@ def _read_vtk(file):
         vertex_array = vertex_array[~np.isnan(vertex_array)].reshape(
                                                             number_vertices, 3)
     else:
-        print "vertex indices out of shape"
+        print("vertex indices out of shape")
     # read faces into df and array
     start_faces = (vtk_df[vtk_df[0].str.contains(
                                             'POLYGONS')].index.tolist()[0]) + 1
@@ -514,7 +514,7 @@ def _write_vtk(filename, vertices, faces, data=None, comment=None):
 
 def _write_ply(filename, vertices, faces, comment=None):
     import pandas as pd
-    print "writing ply format"
+    print("writing ply format")
     # infer number of vertices and faces
     number_vertices = vertices.shape[0]
     number_faces = faces.shape[0]

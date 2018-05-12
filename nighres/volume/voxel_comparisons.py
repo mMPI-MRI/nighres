@@ -8,7 +8,8 @@ import os
 # import sys
 # import cbstools
 
-from ..io import load_volume, save_volume
+str = str
+from nighres.io import load_volume, save_volume
 
 
 # from ..utils import _output_dir_4saving
@@ -204,7 +205,7 @@ def threshold_image(img, threshold=0, binarise=True, zero_below=True):
         Thresholded array (binary or not)
     '''
 
-    if isinstance(img, basestring):
+    if isinstance(img, str):
         mask_img = load_volume(img)
         data = mask_img.get_data()
     if isinstance(img, np.ndarray):
@@ -241,7 +242,7 @@ def _volume_to_1d(volume_file, mask=None):
 
     # if there is a mask, convert it to boolean and select only that data
     if mask is not None:
-        if isinstance(mask, basestring):
+        if isinstance(mask, str):
             mask_img = load_volume(mask)
             mask_bool = mask_img.get_data().astype(bool)
             return data[mask_bool]
@@ -255,7 +256,7 @@ def element_corrcoef(data_matrix, contrast_idxs=None, contrast1=None, contrast2=
     '''
     Calculate the correlation between two (TODO: or more) contrasts provided in data_matrix format
     :param data_matrix: dict
-        dictionary with :
+        dictionary with :st
             'data_matrix_full'  - full data matrix of shape contrast by element by subject
             'contrast_names'    - names of image contrasts
             ...                 - others not used
@@ -450,7 +451,7 @@ def extract_data_multi_image(contrast_image_list, mask_file=None, image_threshol
             ['contrast_names'] - filenames
             ['mask_id_start_stop'] - label idx, start, and stop indices in data_matrix_full for non-binary segmentation
     '''
-    if isinstance(contrast_image_list, basestring):
+    if isinstance(contrast_image_list, str):
         contrast_image_list = [contrast_image_list]
 
     if mask_file is not None:
@@ -615,11 +616,11 @@ def element_lm(data_matrix_full, formula, output_vars, descriptives=None, contra
     if demean_data:
         data_matrix_full = data_matrix_full - np.mean(data_matrix_full,axis=1)[:,np.newaxis,:]
 
-    if isinstance(output_vars, basestring):
+    if isinstance(output_vars, str):
         output_vars = [output_vars]
     output_vars.append('Intercept')  # add the intercept for output too
 
-    if isinstance(descriptives, basestring):  # should be a csv file, load it
+    if isinstance(descriptives, str):  # should be a csv file, load it
         df = pd.read_csv(descriptives, header=0)
     elif isinstance(descriptives, pd.DataFrame):
         df = descriptives.copy()
@@ -803,7 +804,7 @@ def extract_data_group(descriptives, contrast_images_colname_head='img_', mask_f
     import time
     start_t = time.time()
 
-    if isinstance(descriptives, basestring):  # should be a csv file, load it
+    if isinstance(descriptives, str):  # should be a csv file, load it
         df = pd.read_csv(descriptives, header=0)
     elif isinstance(descriptives, pd.DataFrame):  # check if this is a pd.DataFrame
         df = descriptives
@@ -842,7 +843,7 @@ def write_element_results(res, descriptives, output_dir, file_name_head, contras
     if fdr_p is not None:
         import statsmodels.stats.multitest as mt
 
-    if isinstance(descriptives, basestring):  # should be a csv file, load it
+    if isinstance(descriptives, str):  # should be a csv file, load it
         df = pd.read_csv(descriptives, header=0)
     elif isinstance(descriptives, pd.DataFrame):
         df = descriptives
@@ -851,7 +852,7 @@ def write_element_results(res, descriptives, output_dir, file_name_head, contras
     df_contrasts_list = df[df.columns[df.columns.str.startswith(contrast_images_colname_head)]]
     contrasts_list = df_contrasts_list.values.tolist()
     # return df_contrasts_list
-    if isinstance(contrasts_list, basestring):
+    if isinstance(contrasts_list, str):
         fname = contrasts_list[0]
     else:
         fname = contrasts_list[0][0]

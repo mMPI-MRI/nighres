@@ -29,7 +29,7 @@ def load_volume(volume):
     """  # noqa
 
     # if input is a filename, try to load it
-    if isinstance(volume, basestring):
+    if isinstance(volume, str):
         # importing nifti files
         image = nb.load(volume)
     # if volume is already a nibabel object
